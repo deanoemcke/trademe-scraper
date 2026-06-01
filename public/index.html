@@ -283,11 +283,23 @@
   let allListings = [];
   let isRunning = false;
 
-  // ── Known refine panel hashes ─────────────────────────────────────────────
+  // ── Known query parameter labels ─────────────────────────────────────────
+  const KNOWN_PARAMS = {
+    'search_string': 'Search',
+    'condition': 'Condition',
+    'sort_order': 'Sort',
+  };
+
+  // RefinePanel hashes we can name specifically
   const PANEL_LABELS = {
     '5c34c1efa0ac468f91e15161d549c479': 'RAM',
     '7a2bb94c0cb44806ac995a4fc854bcbc': 'Screen Size',
   };
+
+  // Params that are internal/irrelevant to display
+  const IGNORED_PARAMS = new Set(['rows', 'page', 'return_canonical', 'return_metadata',
+    'return_ads', 'return_empty_categories', 'return_super_features', 'return_did_you_mean',
+    'return_variants', 'snap_parameters', 'preferred_shipping_location', 'return_parameter_counts']);
 
   // ── URL parsing ───────────────────────────────────────────────────────────
   function parseUrl(urlStr) {
@@ -295,6 +307,8 @@
       const url = new URL(urlStr);
       if (!url.hostname.includes('trademe')) return null;
       const rows = [];
+
+      // Category from path
       const pathMatch = url.pathname.match(/\/a\/(.+?)\/search/);
       if (pathMatch) {
         const cat = pathMatch[1].split('/')
@@ -302,26 +316,43 @@
           .join(' › ');
         rows.push(['Category', cat]);
       }
-      const p = url.searchParams;
-      const q = p.get('search_string');
-      if (q) rows.push(['Search', `"${q}"`]);
-      const cond = p.get('condition');
-      if (cond) rows.push(['Condition', cond[0].toUpperCase() + cond.slice(1)]);
-      const panels = {};
-      for (const [k, v] of p.entries()) {
-        if (!k.startsWith('RefinePanel')) continue;
-        const hash = k.replace('RefinePanel', '');
-        (panels[hash] = panels[hash] || []).push(v);
+
+      // Group multi-value params
+      const grouped = {};
+      for (const [k, v] of url.searchParams.entries()) {
+        (grouped[k] = grouped[k] || []).push(v);
       }
-      for (const [hash, vals] of Object.entries(panels)) {
-        let label = PANEL_LABELS[hash];
-        if (!label) {
-          if (vals.some(v => v.toLowerCase().includes('gb'))) label = 'RAM';
-          else if (vals.some(v => v.includes('"'))) label = 'Screen Size';
-          else label = 'Filter';
+
+      for (const [key, vals] of Object.entries(grouped)) {
+        if (IGNORED_PARAMS.has(key)) continue;
+
+        // Named known params (single value)
+        if (key in KNOWN_PARAMS) {
+          let val = vals.join(', ');
+          if (key === 'condition') val = val[0].toUpperCase() + val.slice(1);
+          if (key === 'search_string') val = `"${val}"`;
+          rows.push([KNOWN_PARAMS[key], val]);
+          continue;
         }
+
+        // RefinePanel — named or inferred
+        if (key.startsWith('RefinePanel')) {
+          const hash = key.replace('RefinePanel', '');
+          let label = PANEL_LABELS[hash];
+          if (!label) {
+            if (vals.some(v => v.toLowerCase().includes('gb'))) label = 'RAM';
+            else if (vals.some(v => v.includes('"'))) label = 'Screen Size';
+            else label = 'Filter';
+          }
+          rows.push([label, vals.join(', ')]);
+          continue;
+        }
+
+        // Everything else — show as-is with the raw param name as label
+        const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
         rows.push([label, vals.join(', ')]);
       }
+
       return rows.length ? rows : null;
     } catch { return null; }
   }
