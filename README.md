@@ -24,6 +24,12 @@ npx playwright install chromium
 npm start
 ```
 
+To enable disk-backed caching (useful during development — cache survives server restarts):
+
+```bash
+CACHE_DISK=true npm start
+```
+
 Opens at **http://localhost:3000**.
 
 **Flow:**
@@ -33,6 +39,8 @@ Opens at **http://localhost:3000**.
 3. The filter inputs appear — min/max price, keywords, and exclude keywords. These filter the displayed listings **instantly in the browser** with no re-scrape
 4. Click **Deep Search** to fetch the full description, buy now price, reserve status, and pickup info for every currently visible listing. Results populate in real time as each listing is scraped
 5. If you change a filter after a deep search and it reveals listings that haven't been scraped yet, the Deep Search button reactivates and will only fetch the newly visible ones
+
+Search results and listing details are cached in memory for 1 hour. Repeat requests within that window are served instantly without hitting TradeMe. The status bar shows when results come from cache.
 
 ## Output fields
 
