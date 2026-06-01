@@ -1,6 +1,6 @@
 # trademe-scraper
 
-A Node.js/TypeScript CLI tool that scrapes TradeMe for used MacBook Pro listings, with configurable filters and full listing detail extraction (description, buy now price, reserve status, pickup info).
+A Node.js/TypeScript tool that scrapes TradeMe for used MacBook Pro listings. Comes with a web app UI and a CLI. Supports configurable filters and fetches full listing details (description, buy now price, reserve status, pickup info).
 
 ## How it works
 
@@ -18,39 +18,52 @@ npm install
 npx playwright install chromium
 ```
 
-## Usage
+## Web app
+
+```bash
+npm start
+```
+
+Opens at **http://localhost:3000**.
+
+Paste any TradeMe search URL into the input — the app parses and displays the implicit search criteria (category, search term, condition, RAM, screen size) read-only. Set additional explicit filters below, then:
+
+- **Quick Search** — streams listing cards in as they arrive, showing title, price, and location
+- **Deep Search** — runs a quick search first if needed, then fetches full details for each listing (description, buy now price, reserve status, pickup info), enriching the cards one by one as results come in
+
+Results stream in progressively — you don't wait for everything before seeing cards appear.
+
+## CLI
 
 ```bash
 npm run scrape
 ```
 
-Results are printed to the terminal.
+Runs a hardcoded search and prints full listing details to the terminal. The search URL and filters are configured at the top of [src/scraper.ts](src/scraper.ts).
 
 ## Filters
 
+### Web app
+Set via the UI inputs: min/max price, keywords (all must match), and exclude keywords (none must match). The exclude keywords field is pre-filled with sensible defaults.
+
+### CLI
 Edit the `FILTERS` block near the top of [src/scraper.ts](src/scraper.ts):
 
 ```typescript
 const FILTERS: FilterCriteria = {
-  minPrice: 1000,           // exclude listings below this price
-  maxPrice: 2500,           // exclude listings above this price
-  keywords: ['M2'],         // title must contain ALL of these (case-insensitive)
-  excludeKeywords: ['faulty', 'parts'],  // title must contain NONE of these
-  minYear: 2021,            // exclude if a year in the title is before this
+  minPrice: 1000,
+  maxPrice: 2500,
+  keywords: ['M2'],
+  excludeKeywords: ['faulty', 'parts'],
+  minYear: 2021,
 };
 ```
 
-The base TradeMe search URL is already scoped to:
-- Used condition
-- Apple laptops
-- 16–31 GB RAM
-- 13", 14", or 15" screen size
+To change the base search, update `SEARCH_URL` in the same file.
 
-To change the search criteria, update `SEARCH_URL` in the same file.
+## Output fields
 
-## Output
-
-For each listing that passes the filters, the scraper prints:
+For each listing that passes the filters:
 
 - Title
 - Asking / starting price
@@ -60,3 +73,14 @@ For each listing that passes the filters, the scraper prints:
 - Pickup details (and whether pickup-only)
 - Listing URL
 - Full description
+
+## Project structure
+
+```
+src/
+  lib/scraper.ts   # Core scraper logic — shared by web app and CLI
+  server.ts        # Express web server
+  scraper.ts       # CLI entry point
+public/
+  index.html       # Web app frontend
+```
