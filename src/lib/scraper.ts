@@ -5,6 +5,7 @@ export interface Listing {
   price: string;
   location: string;
   url: string;
+  thumbnailUrl?: string;
 }
 
 export interface ListingDetail {
@@ -75,6 +76,7 @@ function parseSearchApiResponse(data: Record<string, unknown>): { listings: List
       price: (item.PriceDisplay as string) ?? 'Price on request',
       location: [(item.Suburb as string), (item.Region as string)].filter(Boolean).join(', ') || 'Unknown',
       url: (item.CanonicalPath as string) ? `${TRADEME_BASE}${item.CanonicalPath}` : '',
+      thumbnailUrl: (item.PictureHref as string) || undefined,
     }))
     .filter((l) => l.title && l.url);
   return { listings, totalCount };

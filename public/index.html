@@ -130,9 +130,32 @@
       margin-bottom: 0.625rem;
       box-shadow: var(--shadow);
       transition: border-color 0.15s, box-shadow 0.15s;
+      display: flex;
+      gap: 1rem;
     }
     .listing-card:hover { border-color: #cbd5e1; box-shadow: var(--shadow-md); }
     .listing-card.enriched { border-left: 3px solid var(--primary); }
+
+    .listing-thumb {
+      flex-shrink: 0;
+      width: 90px; height: 90px;
+      border-radius: 6px;
+      object-fit: cover;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      align-self: flex-start;
+    }
+    .listing-thumb-placeholder {
+      flex-shrink: 0;
+      width: 90px; height: 90px;
+      border-radius: 6px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--border);
+      align-self: flex-start;
+    }
+    .listing-body { flex: 1; min-width: 0; }
 
     .listing-title { font-size: 0.9rem; font-weight: 600; line-height: 1.35; margin-bottom: 0.4rem; }
     .listing-title a { color: var(--primary); text-decoration: none; }
@@ -447,17 +470,27 @@
     card.className = 'listing-card';
     card.id = id;
     card.dataset.url = listing.url;
+
+    const thumb = listing.thumbnailUrl
+      ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
+      : `<div class="listing-thumb-placeholder">
+           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+         </div>`;
+
     card.innerHTML = `
-      <div class="listing-title">
-        <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
+      ${thumb}
+      <div class="listing-body">
+        <div class="listing-title">
+          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
+        </div>
+        <div class="listing-prices">
+          <span class="price">${esc(listing.price)}</span>
+        </div>
+        <div class="listing-meta">
+          <span class="meta-text">📍 ${esc(listing.location)}</span>
+        </div>
+        <div class="listing-extras"></div>
       </div>
-      <div class="listing-prices">
-        <span class="price">${esc(listing.price)}</span>
-      </div>
-      <div class="listing-meta">
-        <span class="meta-text">📍 ${esc(listing.location)}</span>
-      </div>
-      <div class="listing-extras"></div>
     `;
     document.getElementById('listingsContainer').appendChild(card);
   }
