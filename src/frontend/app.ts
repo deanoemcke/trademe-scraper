@@ -264,7 +264,9 @@ function enrichCard(url: string, detail: ListingDetail): void {
 
   const metaEl = card.querySelector('.listing-meta')!;
   let metaHtml = `<span class="meta-text">📍 ${metaEl.querySelector('.meta-text')!.textContent!.slice(2)}</span>`;
-  metaEl.querySelectorAll('.badge').forEach(b => { metaHtml += b.outerHTML; });
+  metaEl.querySelectorAll('.badge').forEach(b => {
+    if (!b.classList.contains('badge-pickuponly')) metaHtml += b.outerHTML;
+  });
   const reserve = reserveText(detail.reserveStatus);
   if (reserve) metaHtml += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
   if (detail.pickupOnly) metaHtml += '<span class="badge badge-pickuponly">Pickup only</span>';
