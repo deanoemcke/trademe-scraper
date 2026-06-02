@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TradeMe MacBook Scraper</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-light: #eff6ff;
+      --bg: #f1f5f9;
+      --surface: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --green: #16a34a;
+      --green-bg: #dcfce7;
+      --yellow: #92400e;
+      --yellow-bg: #fef9c3;
+      --red: #dc2626;
+      --red-bg: #fef2f2;
+      --radius: 10px;
+      --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -2px rgba(0,0,0,0.05);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      font-size: 14px;
+    }
+
+    .page { max-width: 860px; margin: 0 auto; padding: 2rem 1rem 4rem; }
+
+    header { margin-bottom: 1.75rem; }
+    header h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+    header p { color: var(--text-muted); margin-top: 0.2rem; font-size: 0.875rem; }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem 1.5rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 0.875rem;
+    }
+    .card-label {
+      font-size: 0.7rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--text-muted); margin-bottom: 0.65rem;
+    }
+
+    /* ── URL row ── */
+    .url-row { display: flex; gap: 0.5rem; }
+    .url-row input { flex: 1; }
+
+    /* ── Inputs ── */
+    input[type="text"], input[type="url"], input[type="number"] {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      border: 1.5px solid var(--border);
+      border-radius: 7px;
+      font-size: 0.875rem; color: var(--text);
+      background: var(--surface); outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      font-family: inherit;
+    }
+    input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(37,99,235,0.12); }
+    label { display: block; font-size: 0.75rem; font-weight: 500; color: var(--text-muted); margin-bottom: 0.3rem; }
+
+    /* ── Criteria ── */
+    #criteriaBox { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+    .criteria-row { display: grid; grid-template-columns: 90px 1fr; gap: 0.5rem; align-items: baseline; margin-bottom: 0.3rem; }
+    .criteria-key { font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+    .criteria-val { font-size: 0.875rem; }
+
+    /* ── Filter grid ── */
+    .filter-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem 1rem; }
+    .filter-grid .span-2 { grid-column: 1 / -1; }
+    @media (max-width: 520px) { .filter-grid { grid-template-columns: 1fr; } .filter-grid .span-2 { grid-column: 1; } }
+
+    /* ── Toggle group ── */
+    .toggle-group { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.1rem; }
+    .toggle-option {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.35rem 0.75rem;
+      border: 1.5px solid var(--border); border-radius: 999px;
+      font-size: 0.8rem; font-weight: 500; color: var(--text-muted);
+      cursor: pointer; user-select: none;
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+    }
+    .toggle-option input[type="checkbox"] { display: none; }
+    .toggle-option:has(input:checked) {
+      border-color: var(--primary); background: var(--primary-light); color: var(--primary);
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 0.4rem;
+      padding: 0.5rem 1.1rem;
+      border: none; border-radius: 7px;
+      font-size: 0.875rem; font-weight: 500; font-family: inherit;
+      cursor: pointer; white-space: nowrap;
+      transition: background 0.13s, opacity 0.13s, box-shadow 0.13s;
+    }
+    .btn-primary { background: var(--primary); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--primary-hover); box-shadow: 0 1px 4px rgba(37,99,235,0.3); }
+    .btn-secondary { background: var(--bg); color: var(--text); border: 1.5px solid var(--border); }
+    .btn-secondary:hover:not(:disabled) { background: #e2e8f0; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-row { display: flex; gap: 0.625rem; margin-top: 1.1rem; }
+
+    /* ── Status bar ── */
+    .status-bar {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.65rem 1rem; border-radius: var(--radius);
+      font-size: 0.8rem; margin-bottom: 0.875rem;
+      border: 1px solid transparent;
+    }
+    .status-bar.info  { background: var(--primary-light); color: var(--primary); border-color: #bfdbfe; }
+    .status-bar.error { background: var(--red-bg); color: var(--red); border-color: #fecaca; }
+    .status-bar.success { background: var(--green-bg); color: var(--green); border-color: #bbf7d0; }
+
+    /* ── Results ── */
+    .results-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.875rem; }
+    .results-header h2 { font-size: 1rem; font-weight: 700; }
+    .results-count {
+      background: var(--primary); color: white;
+      padding: 0.1rem 0.55rem; border-radius: 999px;
+      font-size: 0.72rem; font-weight: 700;
+    }
+
+    /* ── Listing cards ── */
+    .listing-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.1rem 1.25rem;
+      margin-bottom: 0.625rem;
+      box-shadow: var(--shadow);
+      transition: border-color 0.15s, box-shadow 0.15s;
+      display: flex;
+      gap: 1rem;
+    }
+    .listing-card:hover { border-color: #cbd5e1; box-shadow: var(--shadow-md); }
+    .listing-card.enriched { border-left: 3px solid var(--primary); }
+
+    .listing-thumb {
+      flex-shrink: 0;
+      width: 90px; height: 90px;
+      border-radius: 6px;
+      object-fit: cover;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      align-self: flex-start;
+    }
+    .listing-thumb-placeholder {
+      flex-shrink: 0;
+      width: 90px; height: 90px;
+      border-radius: 6px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      color: var(--border);
+      align-self: flex-start;
+    }
+    .listing-body { flex: 1; min-width: 0; }
+
+    .listing-title { font-size: 0.9rem; font-weight: 600; line-height: 1.35; margin-bottom: 0.4rem; }
+    .listing-title a { color: var(--primary); text-decoration: none; }
+    .listing-title a:hover { text-decoration: underline; }
+
+    .listing-prices { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.45rem; }
+    .price { font-size: 1.05rem; font-weight: 700; }
+    .price-buynow { font-size: 0.8rem; color: var(--text-muted); }
+    .price-buynow strong { color: var(--text); }
+
+    .listing-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
+    .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 5px; font-size: 0.7rem; font-weight: 600; }
+    .badge-none        { background: var(--green-bg); color: var(--green); }
+    .badge-met         { background: #d1fae5; color: #065f46; }
+    .badge-notmet      { background: var(--yellow-bg); color: var(--yellow); }
+    .badge-unknown     { background: var(--bg); color: var(--text-muted); }
+    .badge-pickup      { background: #fef3c7; color: #92400e; }
+    .badge-shipping    { background: #eff6ff; color: #1d4ed8; }
+    .badge-pickuponly  { background: #fef3c7; color: #92400e; }
+    .badge-both        { background: var(--green-bg); color: var(--green); }
+    .meta-text { font-size: 0.78rem; color: var(--text-muted); }
+
+    .listing-description {
+      margin-top: 0.75rem; padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.82rem; line-height: 1.65;
+      color: #334155; white-space: pre-wrap; word-break: break-word;
+    }
+    .desc-toggle {
+      background: none; border: none; padding: 0;
+      font-size: 0.78rem; color: var(--primary); cursor: pointer;
+      font-family: inherit; margin-top: 0.3rem; display: inline-block;
+    }
+    .desc-toggle:hover { text-decoration: underline; }
+    .desc-full { display: none; }
+    .desc-full.open { display: block; }
+    .desc-short.hidden { display: none; }
+
+    /* ── Loading ── */
+    .spinner {
+      display: inline-block; width: 13px; height: 13px; flex-shrink: 0;
+      border: 2px solid rgba(37,99,235,0.25); border-top-color: var(--primary);
+      border-radius: 50%; animation: spin 0.55s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .skeleton {
+      height: 0.85rem; border-radius: 4px;
+      background: linear-gradient(90deg, #e2e8f0 25%, #f8fafc 50%, #e2e8f0 75%);
+      background-size: 200% 100%; animation: shimmer 1.4s infinite;
+    }
+    @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+    /* ── Misc ── */
+    .hidden { display: none !important; }
+    .mt-sm { margin-top: 0.5rem; }
+    .empty-state { text-align: center; padding: 2rem; color: var(--text-muted); font-size: 0.875rem; }
+  </style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>TradeMe MacBook Scraper</h1>
+    <p>Paste a TradeMe search URL to fetch listings, then filter results locally.</p>
+  </header>
+
+  <!-- URL input -->
+  <div class="card">
+    <div class="card-label">Search URL</div>
+    <div class="url-row">
+      <input type="url" id="searchUrl" />
+      <button class="btn btn-primary" id="searchBtn" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Search
+      </button>
+    </div>
+
+    <div id="criteriaBox" class="hidden">
+      <div class="criteria-grid" id="criteriaGrid"></div>
+    </div>
+  </div>
+
+  <!-- Filters + deep search (hidden until first scrape) -->
+  <div id="filtersCard" class="card hidden">
+    <div class="card-label">Filters</div>
+    <div class="filter-grid">
+      <div>
+        <label for="minPrice">Min Price (NZD)</label>
+        <input type="number" id="minPrice" min="0" step="50" />
+      </div>
+      <div>
+        <label for="maxPrice">Max Price (NZD)</label>
+        <input type="number" id="maxPrice" min="0" step="50" />
+      </div>
+      <div class="span-2">
+        <label for="keywords">Keywords — title must contain ALL (comma separated)</label>
+        <input type="text" id="keywords" />
+      </div>
+      <div class="span-2">
+        <label for="excludeKeywords">Exclude Keywords — title must contain NONE (comma separated)</label>
+        <input type="text" id="excludeKeywords" />
+      </div>
+      <div class="span-2">
+        <label>Fulfilment</label>
+        <div class="toggle-group">
+          <label class="toggle-option">
+            <input type="checkbox" id="filterShipping" checked />
+            <span>Shipping available</span>
+          </label>
+          <label class="toggle-option">
+            <input type="checkbox" id="filterPickup" checked />
+            <span>Pickup available</span>
+          </label>
+        </div>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary" id="deepBtn" disabled>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        Deep Search
+      </button>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div id="statusBar" class="status-bar info hidden"></div>
+
+  <!-- Results -->
+  <div id="resultsSection" class="hidden">
+    <div class="results-header">
+      <h2>Results</h2>
+      <span class="results-count" id="resultCount">0</span>
+    </div>
+    <div id="listingsContainer"></div>
+  </div>
+</div>
+
+<script type="module" src="/src/frontend/app.ts"></script>
+</body>
+</html>

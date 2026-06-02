@@ -22,7 +22,6 @@ export interface FilterCriteria {
   maxPrice?: number;
   keywords?: string[];
   excludeKeywords?: string[];
-  minYear?: number;
 }
 
 export type QuickSearchEvent =
@@ -61,14 +60,11 @@ export function applyFilters(listing: Listing, filters: FilterCriteria): boolean
     if (filters.minPrice !== undefined && price < filters.minPrice) return false;
     if (filters.maxPrice !== undefined && price > filters.maxPrice) return false;
   }
-  if (filters.minYear !== undefined) {
-    const years = [...listing.title.matchAll(/\b(20\d{2})\b/g)].map((m) => parseInt(m[1]));
-    if (years.length > 0 && Math.max(...years) < filters.minYear) return false;
-  }
+
   return true;
 }
 
-function parseSearchApiResponse(data: Record<string, unknown>): { listings: Listing[]; totalCount: number; pageSize: number } {
+export function parseSearchApiResponse(data: Record<string, unknown>): { listings: Listing[]; totalCount: number; pageSize: number } {
   const items = (data?.List ?? []) as ApiItem[];
   const totalCount = (data?.TotalCount as number) ?? 0;
   const pageSize = (data?.PageSize as number) || (items.length || 1);
@@ -124,7 +120,7 @@ function extractFromGraphQL(json: any): Partial<ListingDetail> {
   return { buyNowPrice, reserveStatus, pickupOnly: !hasShipping, pickupLocation };
 }
 
-function extractDescriptionFromText(bodyText: string): string {
+export function extractDescriptionFromText(bodyText: string): string {
   const marker = 'Description\n';
   const start = bodyText.indexOf(marker);
   if (start === -1) return '';
@@ -138,7 +134,7 @@ function extractDescriptionFromText(bodyText: string): string {
   return after.slice(0, end).trim();
 }
 
-function extractStructuredFromText(bodyText: string): Partial<ListingDetail> {
+export function extractStructuredFromText(bodyText: string): Partial<ListingDetail> {
   let buyNowPrice: number | null = null;
   const bnMatch = bodyText.match(/Buy [Nn]ow\s*\n\s*\$([\d,]+(?:\.\d+)?)/);
   if (bnMatch) buyNowPrice = parseFloat(bnMatch[1].replace(/,/g, ''));

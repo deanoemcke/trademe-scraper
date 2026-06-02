@@ -1,9 +1,13 @@
 {
   "name": "trademe-scraper",
   "version": "1.0.0",
-  "main": "index.js",
+  "main": "index.html",
   "scripts": {
-    "start": "tsx src/server.ts"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "keywords": [],
   "author": "",
@@ -11,12 +15,15 @@
   "description": "",
   "dependencies": {
     "@types/node": "^25.9.1",
-    "express": "^5.2.1",
     "playwright": "^1.60.0",
-    "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "tsx": "^4.22.4"
   },
   "devDependencies": {
-    "@types/express": "^5.0.6"
+    "@types/jsdom": "^28.0.3",
+    "jsdom": "^29.1.1",
+    "knip": "^6.15.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
   }
 }
