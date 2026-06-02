@@ -273,11 +273,11 @@ function enrichCard(url: string, detail: ListingDetail): void {
   metaEl.innerHTML = metaHtml;
 
   const extras = card.querySelector('.listing-extras')!;
-  let html = '';
+  let body = '';
 
   // ── Details ───────────────────────────────────────────────────────────────
   if (detail.details.length > 0) {
-    html += `<div class="deep-section">
+    body += `<div class="deep-section">
       <div class="deep-section-label">Details</div>
       <div class="details-table">${detail.details.map(({ key, value }) =>
         `<div class="details-row"><span class="details-key">${esc(key)}</span><span class="details-val">${esc(value)}</span></div>`
@@ -286,27 +286,36 @@ function enrichCard(url: string, detail: ListingDetail): void {
   }
 
   // ── Description ───────────────────────────────────────────────────────────
-  html += `<div class="deep-section"><div class="deep-section-label">Description</div>`;
+  body += `<div class="deep-section"><div class="deep-section-label">Description</div>`;
   if (detail.description) {
-    const text = tidyDescription(detail.description);
-    const LIMIT = 320;
-    const isLong = text.length > LIMIT;
-    html += `<div class="listing-description"><span class="desc-short">${esc(isLong ? text.slice(0, LIMIT) + '…' : text)}</span>${isLong ? `<span class="desc-full">${esc(text)}</span><br><button class="desc-toggle">Show more</button>` : ''}</div>`;
+    body += `<div class="listing-description">${esc(tidyDescription(detail.description))}</div>`;
   } else {
-    html += `<p class="deep-empty">No description provided.</p>`;
+    body += `<p class="deep-empty">No description provided.</p>`;
   }
-  html += `</div>`;
+  body += `</div>`;
 
   // ── Questions & Answers ───────────────────────────────────────────────────
-  html += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
+  body += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
   if (detail.questionsAndAnswers) {
-    html += `<div class="qa-content">${esc(detail.questionsAndAnswers)}</div>`;
+    body += `<div class="qa-content">${esc(detail.questionsAndAnswers)}</div>`;
   } else {
-    html += `<p class="deep-empty">No questions yet.</p>`;
+    body += `<p class="deep-empty">No questions yet.</p>`;
   }
-  html += `</div>`;
+  body += `</div>`;
 
-  extras.innerHTML = html;
+  extras.innerHTML = `<div class="extras-body collapsed">${body}<div class="extras-fade"></div></div><button class="extras-toggle" style="display:none">Show less</button>`;
+}
+
+function expandExtras(body: HTMLElement): void {
+  body.classList.remove('collapsed');
+  const btn = body.nextElementSibling as HTMLElement;
+  if (btn) btn.style.display = '';
+}
+
+function collapseExtras(btn: HTMLButtonElement): void {
+  const body = btn.previousElementSibling as HTMLElement;
+  body.classList.add('collapsed');
+  btn.style.display = 'none';
 }
 
 function toggleDesc(btn: HTMLButtonElement): void {
@@ -461,6 +470,10 @@ el<HTMLButtonElement>('deepBtn').addEventListener('click', runDeepSearch);
 
 // Event delegation for description toggles (avoids global onclick)
 el('listingsContainer').addEventListener('click', (e: MouseEvent) => {
-  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('.desc-toggle');
-  if (btn) toggleDesc(btn);
+  const showLessBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.extras-toggle');
+  if (showLessBtn) { collapseExtras(showLessBtn); return; }
+  const collapsedBody = (e.target as HTMLElement).closest<HTMLElement>('.extras-body.collapsed');
+  if (collapsedBody) { expandExtras(collapsedBody); return; }
+  const descBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.desc-toggle');
+  if (descBtn) toggleDesc(descBtn);
 });

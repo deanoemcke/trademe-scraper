@@ -210,6 +210,20 @@
     .details-val { font-size: 0.78rem; font-weight: 500; }
     .qa-content { font-size: 0.82rem; line-height: 1.65; white-space: pre-wrap; word-break: break-word; color: #334155; }
     .deep-empty { font-size: 0.82rem; color: var(--text-muted); font-style: italic; }
+    .extras-body { position: relative; }
+    .extras-body.collapsed { max-height: 5.5rem; overflow: hidden; cursor: pointer; }
+    .extras-fade { display: none; }
+    .collapsed .extras-fade {
+      display: block; position: absolute; bottom: 0; left: 0; right: 0; height: 3rem;
+      background: linear-gradient(to bottom, rgba(255,255,255,0), #fff);
+      pointer-events: none;
+    }
+    .extras-toggle {
+      background: none; border: none; padding: 0.5rem 0 0;
+      font-size: 0.78rem; color: var(--primary); cursor: pointer;
+      font-family: inherit; display: block;
+    }
+    .extras-toggle:hover { text-decoration: underline; }
     .desc-toggle {
       background: none; border: none; padding: 0;
       font-size: 0.78rem; color: var(--primary); cursor: pointer;
