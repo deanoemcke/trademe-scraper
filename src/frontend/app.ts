@@ -296,8 +296,13 @@ function enrichCard(url: string, detail: ListingDetail): void {
 
   // ── Questions & Answers ───────────────────────────────────────────────────
   body += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
-  if (detail.questionsAndAnswers) {
-    body += `<div class="qa-content">${esc(detail.questionsAndAnswers)}</div>`;
+  if (detail.questionsAndAnswers.length > 0) {
+    body += detail.questionsAndAnswers.map(({ question, answer }) =>
+      `<div class="qa-pair">` +
+      `<div class="qa-item"><span class="qa-badge qa-q">Q</span><span class="qa-text">${esc(question)}</span></div>` +
+      (answer ? `<div class="qa-item"><span class="qa-badge qa-a">A</span><span class="qa-text">${esc(answer)}</span></div>` : '') +
+      `</div>`
+    ).join('');
   } else {
     body += `<p class="deep-empty">No questions yet.</p>`;
   }
@@ -409,12 +414,13 @@ async function runDeepSearch(): Promise<void> {
       if (ev.type === 'progress') {
         setStatus(`Fetching details ${ev.index}/${ev.total} — ${String(ev.title).slice(0, 55)}…`);
       } else if (ev.type === 'detail') {
+        const detail = ev.detail as ListingDetail;
         const item = allListings.find(i => i.data.url === ev.url);
         if (item) {
           item.deepSearched = true;
-          item.data.description = (ev.detail as ListingDetail).description;
+          item.data.description = detail.description;
         }
-        enrichCard(ev.url as string, ev.detail as ListingDetail);
+        enrichCard(ev.url as string, detail);
 
         if (item) {
           const card = document.getElementById(cardId(item.data.url));

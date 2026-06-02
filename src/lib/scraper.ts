@@ -17,7 +17,7 @@ export interface ListingDetail {
   reserveStatus: string;
   pickupOnly: boolean;
   pickupLocation: string;
-  questionsAndAnswers: string;
+  questionsAndAnswers: Array<{ question: string; answer: string }>;
 }
 
 export interface FilterCriteria {
@@ -124,28 +124,62 @@ function extractFromGraphQL(json: any): Partial<ListingDetail> {
   return { buyNowPrice, reserveStatus, pickupOnly: !hasShipping, pickupLocation };
 }
 
-export function extractQuestionsAndAnswers(bodyText: string): string {
-  const marker = 'Questions & answers\n';
-  const start = bodyText.indexOf(marker);
-  if (start === -1) return '';
-  let after = bodyText.slice(start + marker.length).trimStart();
+export function extractQuestionsAndAnswers(bodyText: string): Array<{ question: string; answer: string }> {
+  // Heading varies: "Questions & answers", "Questions & Answers (5)", etc.
+  const start = bodyText.toLowerCase().indexOf('questions & answers');
+  if (start === -1) return [];
+  const lineEnd = bodyText.indexOf('\n', start);
+  if (lineEnd === -1) return [];
+  let after = bodyText.slice(lineEnd + 1).trimStart();
   if (after.startsWith('Ask a question\n')) after = after.slice('Ask a question\n'.length).trimStart();
-  const ends = ["Seller's other listings", 'Similar listings', 'You might also like', 'Back to top'];
+  const afterLower = after.toLowerCase();
+  const ends = ['ask a question', 'about the seller', 'about the store', "seller's other listings", 'similar listings', 'you might also like', 'back to top'];
   let end = after.length;
   for (const e of ends) {
-    const idx = after.indexOf(e);
+    const idx = afterLower.indexOf(e);
     if (idx !== -1 && idx < end) end = idx;
   }
-  return after.slice(0, end).trim();
+  const content = after.slice(0, end).trim();
+  if (!content) return [];
+
+  // Split into text segments by stripping username+timestamp pairs.
+  // Each pair is two lines: "username (N" followed by ") • timestamp".
+  const lines = content.split('\n');
+  const segments: string[] = [];
+  const current: string[] = [];
+  let i = 0;
+  let foundAnyUsernames = false;
+  while (i < lines.length) {
+    if (i + 1 < lines.length && /\(\d+$/.test(lines[i].trim()) && lines[i + 1].trim().startsWith(') •')) {
+      foundAnyUsernames = true;
+      segments.push(current.splice(0).join('\n').trim());
+      i += 2;
+    } else {
+      current.push(lines[i]);
+      i++;
+    }
+  }
+  if (current.length) segments.push(current.join('\n').trim());
+
+  // If we didn't find any Q&A pairs (no username lines), return empty
+  if (!foundAnyUsernames) return [];
+
+  // Segments alternate Q, A, Q, A …
+  const pairs: Array<{ question: string; answer: string }> = [];
+  for (let j = 0; j < segments.length; j += 2) {
+    const question = segments[j].trim();
+    const answer = segments[j + 1]?.trim() ?? '';
+    if (question) pairs.push({ question, answer });
+  }
+  return pairs;
 }
 
 export function extractDetails(bodyText: string): Array<{ key: string; value: string }> {
-  const descStart = bodyText.indexOf('Description\n');
-  if (descStart === -1) return [];
-  const detailsStart = bodyText.indexOf('Details\n', descStart + 'Description\n'.length);
+  // Details section appears before Description in TradeMe page layout
+  const detailsStart = bodyText.indexOf('Details\n');
   if (detailsStart === -1) return [];
   const after = bodyText.slice(detailsStart + 'Details\n'.length);
-  const ends = ['Shipping & pick-up options', 'Questions & answers', "Seller's other listings", 'Similar listings', 'You might also like'];
+  const ends = ['Description\n', 'Shipping & pick-up options'];
   let end = after.length;
   for (const e of ends) {
     const idx = after.indexOf(e);
@@ -154,7 +188,8 @@ export function extractDetails(bodyText: string): Array<{ key: string; value: st
   const lines = after.slice(0, end).split('\n').map(l => l.trim()).filter(Boolean);
   const pairs: Array<{ key: string; value: string }> = [];
   for (let i = 0; i + 1 < lines.length; i += 2) {
-    pairs.push({ key: lines[i], value: lines[i + 1] });
+    // Keys are formatted "Label:" with a trailing colon
+    pairs.push({ key: lines[i].replace(/:$/, ''), value: lines[i + 1] });
   }
   return pairs;
 }
@@ -164,13 +199,16 @@ export function extractDescriptionFromText(bodyText: string): string {
   const start = bodyText.indexOf(marker);
   if (start === -1) return '';
   const after = bodyText.slice(start + marker.length).trimStart();
-  const ends = ['Details\n', 'Shipping & pick-up options', 'Questions & answers', "Seller's other listings", 'Similar listings', 'You might also like'];
+  // Case-insensitive end matching — heading capitalisation varies (e.g. "Questions & Answers (5)")
+  const afterLower = after.toLowerCase();
+  const ends = ['details', 'shipping & pick-up options', 'questions & answers', "seller's other listings", 'similar listings', 'you might also like'];
   let end = after.length;
   for (const e of ends) {
-    const idx = after.indexOf(e);
+    const idx = afterLower.indexOf(e);
     if (idx !== -1 && idx < end) end = idx;
   }
-  return after.slice(0, end).trim();
+  // Strip trailing "Show more" UI text TradeMe injects before the shipping section
+  return after.slice(0, end).replace(/\s*\nShow more\s*$/, '').trim();
 }
 
 export function extractStructuredFromText(bodyText: string): Partial<ListingDetail> {
