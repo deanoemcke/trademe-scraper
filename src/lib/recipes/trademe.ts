@@ -170,7 +170,7 @@ export function extractDescriptionFromText(bodyText: string): string {
   if (start === -1) return '';
   const after = bodyText.slice(start + marker.length).trimStart();
   const afterLower = after.toLowerCase();
-  const ends = ['details', 'shipping & pick-up options', 'questions & answers', "seller's other listings", 'similar listings', 'you might also like'];
+  const ends = ['\ndetails\n', 'shipping & pick-up options', 'questions & answers', "seller's other listings", 'similar listings', 'you might also like'];
   let end = after.length;
   for (const e of ends) {
     const idx = afterLower.indexOf(e);
