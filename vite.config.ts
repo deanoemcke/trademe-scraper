@@ -99,7 +99,7 @@ export default defineConfig({
 
           const cached = searchCache.get(url);
           if (cached && isFresh(cached)) {
-            console.log(`[cache] search hit (${cacheAge(cached)})`);
+            console.log(`[cache:memory] search hit (${cacheAge(cached)})`);
             startSSE(res);
             sse(res, { type: 'progress', message: `Loaded from cache (${cacheAge(cached)})` });
             for (const listing of cached.data) sse(res, { type: 'listing', data: listing });
@@ -120,7 +120,7 @@ export default defineConfig({
             if (listings.length > 0) {
               searchCache.set(url, { data: listings, cachedAt: Date.now() });
               saveToDisk();
-              console.log(`[cache] stored ${listings.length} listings`);
+              console.log(`[cache:${DISK_CACHE ? 'disk' : 'memory'}] stored ${listings.length} listings`);
             }
           } catch (err) {
             sse(res, { type: 'error', message: (err as Error).message });
@@ -148,7 +148,7 @@ export default defineConfig({
           }
 
           if (toScrape.length === 0) {
-            console.log(`[cache] detail hit for all ${listings.length} listings`);
+            console.log(`[cache:memory] detail hit for all ${listings.length} listings`);
             startSSE(res);
             for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
             sse(res, { type: 'complete' });
@@ -157,7 +157,7 @@ export default defineConfig({
 
           if (isBusy) { sendJSON(res, 429, { error: 'A search is already in progress — please wait.' }); return; }
 
-          if (fromCache.length > 0) console.log(`[cache] detail hit for ${fromCache.length}/${listings.length} listings`);
+          if (fromCache.length > 0) console.log(`[cache:memory] detail hit for ${fromCache.length}/${listings.length} listings`);
 
           isBusy = true;
           startSSE(res);
@@ -168,6 +168,7 @@ export default defineConfig({
               if (event.type === 'detail') {
                 detailCache.set(event.url, { data: event.detail, cachedAt: Date.now() });
                 saveToDisk();
+                console.log(`[cache:${DISK_CACHE ? 'disk' : 'memory'}] stored detail for ${event.url}`);
               }
               sse(res, event);
             });
