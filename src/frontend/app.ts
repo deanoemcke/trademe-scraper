@@ -241,7 +241,8 @@ async function streamPost(
 // ── Card helpers ──────────────────────────────────────────────────────────────
 
 function cardId(url: string): string {
-  return 'card-' + (url.match(/\/listing\/(\d+)/)?.[1] ?? Math.random().toString(36).slice(2));
+  const numId = url.match(/\/(?:listing|item)\/(\d+)/)?.[1];
+  return 'card-' + (numId ?? url.replace(/[^a-zA-Z0-9]/g, '').slice(-20));
 }
 
 function shippingBadge(allowsPickups: number | undefined): string {
@@ -273,6 +274,7 @@ function renderCard(listing: Listing): void {
   card.className = 'listing-card';
   card.id = id;
   card.dataset.url = listing.url;
+  card.dataset.isAuction = String(listing.isAuction ?? false);
 
   const thumb = listing.thumbnailUrl
     ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
@@ -287,7 +289,7 @@ function renderCard(listing: Listing): void {
         <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
       </div>
       <div class="listing-prices">
-        <span class="price">${esc(listing.price)}</span>
+        <span class="price">${listing.price}</span>
       </div>
       <div class="listing-meta">
         <span class="meta-text">📍 ${esc(listing.location)}</span>
@@ -304,21 +306,38 @@ function enrichCard(url: string, detail: ListingDetail): void {
   if (!card) return;
   card.classList.add('enriched');
 
+  const isAuction = card.dataset.isAuction === 'true';
+
   const pricesEl = card.querySelector('.listing-prices')!;
-  let pricesHtml = `<span class="price">${pricesEl.querySelector('.price')!.textContent}</span>`;
-  if (detail.buyNowPrice != null) {
+  let pricesHtml = `<span class="price">${pricesEl.querySelector('.price')!.innerHTML}</span>`;
+  if (isAuction && detail.buyNowPrice != null) {
     pricesHtml += `<span class="price-buynow">Buy Now: <strong>$${Number(detail.buyNowPrice).toLocaleString()}</strong></span>`;
   }
   pricesEl.innerHTML = pricesHtml;
 
   const metaEl = card.querySelector('.listing-meta')!;
   let metaHtml = `<span class="meta-text">📍 ${metaEl.querySelector('.meta-text')!.textContent!.slice(2)}</span>`;
+  const { shippingAvailable, pickupAvailable } = detail;
+  const hasDefiniteData = shippingAvailable !== null || pickupAvailable !== null;
   metaEl.querySelectorAll('.badge').forEach(b => {
-    if (!b.classList.contains('badge-pickuponly')) metaHtml += b.outerHTML;
+    const isDeliveryBadge = b.classList.contains('badge-pickuponly') ||
+                            b.classList.contains('badge-shipping') ||
+                            b.classList.contains('badge-both');
+    if (!isDeliveryBadge || !hasDefiniteData) metaHtml += b.outerHTML;
   });
-  const reserve = reserveText(detail.reserveStatus);
-  if (reserve) metaHtml += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
-  if (detail.pickupOnly) metaHtml += '<span class="badge badge-pickuponly">Pickup only</span>';
+  if (isAuction) {
+    const reserve = reserveText(detail.reserveStatus);
+    if (reserve) metaHtml += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
+  }
+  if (hasDefiniteData) {
+    if (shippingAvailable && pickupAvailable) {
+      metaHtml += '<span class="badge badge-both">Shipping &amp; pickup</span>';
+    } else if (shippingAvailable) {
+      metaHtml += '<span class="badge badge-shipping">Shipping only</span>';
+    } else if (pickupAvailable) {
+      metaHtml += '<span class="badge badge-pickuponly">Pickup only</span>';
+    }
+  }
   metaEl.innerHTML = metaHtml;
 
   const extras = card.querySelector('.listing-extras')!;
@@ -329,7 +348,7 @@ function enrichCard(url: string, detail: ListingDetail): void {
     body += `<div class="deep-section">
       <div class="deep-section-label">Details</div>
       <div class="details-table">${detail.details.map(({ key, value }) =>
-        `<div class="details-row"><span class="details-key">${esc(key)}</span><span class="details-val">${esc(value)}</span></div>`
+        `<span class="details-key">${esc(key)}</span><span class="details-val">${esc(value)}</span>`
       ).join('')}</div>
     </div>`;
   }
@@ -344,18 +363,16 @@ function enrichCard(url: string, detail: ListingDetail): void {
   body += `</div>`;
 
   // ── Questions & Answers ───────────────────────────────────────────────────
-  body += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
   if (detail.questionsAndAnswers.length > 0) {
+    body += `<div class="deep-section"><div class="deep-section-label">Questions &amp; Answers</div>`;
     body += detail.questionsAndAnswers.map(({ question, answer }) =>
       `<div class="qa-pair">` +
       `<div class="qa-item"><span class="qa-badge qa-q">Q</span><span class="qa-text">${esc(question)}</span></div>` +
       (answer ? `<div class="qa-item"><span class="qa-badge qa-a">A</span><span class="qa-text">${esc(answer)}</span></div>` : '') +
       `</div>`
     ).join('');
-  } else {
-    body += `<p class="deep-empty">No questions yet.</p>`;
+    body += `</div>`;
   }
-  body += `</div>`;
 
   extras.innerHTML = `<div class="extras-body collapsed">${body}<div class="extras-fade"></div></div><button class="extras-toggle" style="display:none">Show less</button>`;
 }

@@ -94,6 +94,7 @@ export function parseSearchApiResponse(data: Record<string, unknown>): { listing
       thumbnailUrl: ((item.PictureHref as string) || undefined)
         ?.replace('/photoserver/thumb/', '/photoserver/full/'),
       allowsPickups: (item.AllowsPickups as number) || undefined,
+      isAuction: true,
     }))
     .filter((l) => l.title && l.url);
   return { listings, totalCount, pageSize };
@@ -193,11 +194,13 @@ export function extractStructuredFromText(bodyText: string): Partial<ListingDeta
   const pickupLocation = pickupMatch ? pickupMatch[1].trim() : '';
   const shippingIdx = bodyText.indexOf('Shipping & pick-up options');
   const shippingSection = shippingIdx >= 0 ? bodyText.slice(shippingIdx) : '';
-  const pickupOnly =
+  const isPickupOnly =
     /Pick-?up only|pickup only/i.test(bodyText) ||
     (pickupLocation !== '' && !/North Island|South Island|NZ Post|Courier/i.test(shippingSection));
+  const shippingAvailable = !isPickupOnly;
+  const pickupAvailable = pickupLocation !== '';
 
-  return { buyNowPrice, reserveStatus, pickupOnly, pickupLocation };
+  return { buyNowPrice, reserveStatus, shippingAvailable, pickupAvailable, pickupLocation };
 }
 
 // ── GraphQL extraction ────────────────────────────────────────────────────────
@@ -221,7 +224,8 @@ function extractFromGraphQL(json: any): Partial<ListingDetail> {
   const pickupLocation = pickupOption?.name?.replace(/^Pick up from\s*/i, '') ?? '';
   const reserveStatus: string =
     listing?.contentViews?.listingPurchaseContentCard?.auctionDetails?.reserveStatus ?? 'UNKNOWN';
-  return { buyNowPrice, reserveStatus, pickupOnly: !hasShipping, pickupLocation };
+  const pickupAvailable = pickupOption !== undefined;
+  return { buyNowPrice, reserveStatus, shippingAvailable: hasShipping, pickupAvailable, pickupLocation };
 }
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
@@ -277,7 +281,8 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
       graphqlResult.reserveStatus && graphqlResult.reserveStatus !== 'UNKNOWN'
         ? graphqlResult.reserveStatus
         : (dom.reserveStatus ?? 'UNKNOWN'),
-    pickupOnly: graphqlResult.pickupOnly ?? dom.pickupOnly ?? false,
+    shippingAvailable: graphqlResult.shippingAvailable ?? dom.shippingAvailable ?? null,
+    pickupAvailable: graphqlResult.pickupAvailable ?? dom.pickupAvailable ?? null,
     pickupLocation: graphqlResult.pickupLocation || dom.pickupLocation || '',
     questionsAndAnswers,
   };

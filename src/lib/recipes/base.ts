@@ -6,6 +6,7 @@ export interface Listing {
   thumbnailUrl?: string;
   allowsPickups?: number;
   description?: string;
+  isAuction?: boolean;
 }
 
 export interface ListingDetail {
@@ -13,7 +14,8 @@ export interface ListingDetail {
   description: string;
   buyNowPrice: number | null;
   reserveStatus: string;
-  pickupOnly: boolean;
+  pickupAvailable: boolean | null;
+  shippingAvailable: boolean | null;
   pickupLocation: string;
   questionsAndAnswers: Array<{ question: string; answer: string }>;
 }
