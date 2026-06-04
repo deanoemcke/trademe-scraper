@@ -15,6 +15,7 @@ interface UrlCardState {
   searchBtn: HTMLButtonElement;
   criteriaEl: HTMLElement;
   countEl: HTMLElement;
+  cacheStatusEl: HTMLElement;
   searched: boolean;
   searchedUrl: string;
 }
@@ -75,6 +76,22 @@ function setBusy(busy: boolean): void {
 }
 
 const SEARCH_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
+const DEEP_BTN_INNER = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> Deep Search`;
+const CANCEL_BTN_INNER = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Cancel Deep Search`;
+
+function setDeepBtnCancelling(): void {
+  const btn = el<HTMLButtonElement>('deepBtn');
+  btn.innerHTML = CANCEL_BTN_INNER;
+  btn.className = 'btn btn-danger';
+  btn.disabled = false;
+}
+
+function restoreDeepBtn(): void {
+  const btn = el<HTMLButtonElement>('deepBtn');
+  btn.innerHTML = DEEP_BTN_INNER;
+  btn.className = 'btn btn-secondary';
+  updateDeepBtn();
+}
 
 function createUrlCard(): UrlCardState {
   const idx = urlCardStates.length;
@@ -86,7 +103,7 @@ function createUrlCard(): UrlCardState {
       <input type="url" class="url-input" placeholder="Paste TradeMe search URL…" />
       <button class="btn btn-primary url-search-btn" disabled>${SEARCH_ICON} Search</button>
     </div>
-    <div class="url-criteria hidden"><div class="criteria-grid"></div></div>
+    <div class="url-criteria hidden"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
   `;
   el('urlCardsContainer').appendChild(card);
 
@@ -94,8 +111,9 @@ function createUrlCard(): UrlCardState {
   const searchBtn = card.querySelector<HTMLButtonElement>('.url-search-btn')!;
   const criteriaEl = card.querySelector<HTMLElement>('.url-criteria')!;
   const countEl = card.querySelector<HTMLElement>('.url-card-count')!;
+  const cacheStatusEl = card.querySelector<HTMLElement>('.cache-status')!;
 
-  const state: UrlCardState = { el: card, input, searchBtn, criteriaEl, countEl, searched: false, searchedUrl: '' };
+  const state: UrlCardState = { el: card, input, searchBtn, criteriaEl, countEl, cacheStatusEl, searched: false, searchedUrl: '' };
   urlCardStates.push(state);
 
   input.addEventListener('input', () => {
@@ -116,16 +134,18 @@ function resetAllResults(): void {
   el('listingsContainer').innerHTML = '';
   el('resultCount').textContent = '0';
   el('resultsSection').classList.add('hidden');
-  el('filtersCard').classList.add('hidden');
   for (const s of urlCardStates) {
     s.searched = false;
     s.searchedUrl = '';
     s.countEl.textContent = '';
     s.criteriaEl.querySelector('.criteria-grid')!.innerHTML = '';
     s.criteriaEl.classList.add('hidden');
+    s.cacheStatusEl.classList.add('hidden');
+    s.cacheStatusEl.innerHTML = '';
     s.input.readOnly = false;
     s.searchBtn.disabled = !canHandleUrl(s.input.value.trim());
   }
+  updateDeepBtn();
 }
 
 async function searchUrlCard(state: UrlCardState): Promise<void> {
@@ -139,6 +159,7 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   setStatus('Fetching listings…');
 
   const countBefore = allListings.length;
+  let cachedAge = '';
   try {
     await streamPost('/api/quick-search', { url }, (ev) => {
       if (ev.type === 'criteria') {
@@ -147,6 +168,8 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
           .map(([k, v]) => `<div class="criteria-row"><span class="criteria-key">${esc(k)}</span><span class="criteria-val">${esc(v)}</span></div>`)
           .join('');
         state.criteriaEl.classList.remove('hidden');
+      } else if (ev.type === 'cached') {
+        cachedAge = ev.age as string;
       } else if (ev.type === 'progress') {
         setStatus(ev.message as string);
       } else if (ev.type === 'listing') {
@@ -168,6 +191,13 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   state.searchedUrl = url;
   state.searchBtn.disabled = true;
   state.input.readOnly = true;
+
+  if (cachedAge) {
+    state.cacheStatusEl.innerHTML =
+      `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;
+    state.cacheStatusEl.classList.remove('hidden');
+    state.cacheStatusEl.querySelector('.cache-clear-btn')!.addEventListener('click', clearQuickSearchCache);
+  }
   const added = allListings.length - countBefore;
   state.countEl.textContent = `— ${added} listing${added !== 1 ? 's' : ''}`;
 
@@ -176,7 +206,6 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   setBusy(false);
 
   if (allListings.length > 0) {
-    el('filtersCard').classList.remove('hidden');
     el('addUrlBtn').classList.remove('hidden');
     applyClientFilters();
   }
@@ -198,11 +227,35 @@ function applyClientFilters(): void {
 }
 
 function updateDeepBtn(): void {
+  const btn = el<HTMLButtonElement>('deepBtn');
+  if (btn.classList.contains('btn-danger')) return; // in cancel mode — leave it alone
   const filters = getFilters();
   const hasUnscraped = allListings.some(
     item => !item.deepSearched && matchesFilters(item.data, filters)
   );
-  el<HTMLButtonElement>('deepBtn').disabled = isRunning || !hasUnscraped;
+  btn.disabled = isRunning || !hasUnscraped;
+
+  const hasDeepSearched = allListings.some(item => item.deepSearched);
+  el('clearDeepCacheBtn').classList.toggle('hidden', !hasDeepSearched);
+}
+
+async function clearQuickSearchCache(): Promise<void> {
+  await fetch('/api/cache/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'quick-search' }),
+  }).catch(() => null);
+  resetAllResults();
+}
+
+async function clearDeepSearchCache(): Promise<void> {
+  await fetch('/api/cache/clear', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'deep-search' }),
+  }).catch(() => null);
+  for (const item of allListings) item.deepSearched = false;
+  updateDeepBtn();
 }
 
 // ── SSE streaming ─────────────────────────────────────────────────────────────
@@ -210,12 +263,14 @@ function updateDeepBtn(): void {
 async function streamPost(
   endpoint: string,
   body: unknown,
-  onData: (data: Record<string, unknown>) => void
+  onData: (data: Record<string, unknown>) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
@@ -405,6 +460,8 @@ function toggleDesc(btn: HTMLButtonElement): void {
 
 // ── Deep Search ───────────────────────────────────────────────────────────────
 
+let deepAbortController: AbortController | null = null;
+
 async function runDeepSearch(): Promise<void> {
   const filters = getFilters();
   const toScrape = allListings
@@ -413,6 +470,8 @@ async function runDeepSearch(): Promise<void> {
 
   if (toScrape.length === 0) return;
 
+  deepAbortController = new AbortController();
+  setDeepBtnCancelling();
   setBusy(true);
   let hiddenByDescription = 0;
 
@@ -462,9 +521,14 @@ async function runDeepSearch(): Promise<void> {
       } else if (ev.type === 'error') {
         setStatus(ev.message as string, 'error');
       }
-    });
+    }, deepAbortController.signal);
   } catch (err) {
-    setStatus((err as Error).message, 'error');
+    if ((err as Error).name !== 'AbortError') {
+      setStatus((err as Error).message, 'error');
+    }
+  } finally {
+    deepAbortController = null;
+    restoreDeepBtn();
   }
 
   setBusy(false);
@@ -482,7 +546,12 @@ el('addUrlBtn').addEventListener('click', () => {
   newCard.el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 
-el<HTMLButtonElement>('deepBtn').addEventListener('click', runDeepSearch);
+el<HTMLButtonElement>('deepBtn').addEventListener('click', () => {
+  if (deepAbortController) deepAbortController.abort();
+  else runDeepSearch();
+});
+
+el<HTMLButtonElement>('clearDeepCacheBtn').addEventListener('click', clearDeepSearchCache);
 
 (['minPrice', 'maxPrice', 'keywords', 'excludeKeywords'] as const).forEach(id => {
   el(id).addEventListener('input', applyClientFilters);

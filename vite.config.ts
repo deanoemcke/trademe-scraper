@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import fs from 'fs';
 import path from 'path';
+import Database from 'better-sqlite3';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { getRecipeForUrl } from './src/lib/recipes/server';
 import type { Listing, ListingDetail } from './src/lib/recipes/base';
@@ -8,45 +9,47 @@ import type { Listing, ListingDetail } from './src/lib/recipes/base';
 // ── Cache ─────────────────────────────────────────────────────────────────────
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
-const DISK_CACHE = process.env.CACHE_DISK === 'true';
-const DISK_CACHE_PATH = path.resolve(__dirname, '.cache/cache.json');
+const DB_PATH = path.resolve(__dirname, '.cache/cache.db');
 
-interface CacheEntry<T> { data: T; cachedAt: number; }
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+const db = new Database(DB_PATH);
+db.exec(`
+  CREATE TABLE IF NOT EXISTS quick_searches (
+    url TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    cached_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS deep_details (
+    url TEXT PRIMARY KEY,
+    data TEXT NOT NULL,
+    cached_at INTEGER NOT NULL
+  );
+`);
 
-const searchCache = new Map<string, CacheEntry<Listing[]>>();
-const detailCache = new Map<string, CacheEntry<ListingDetail>>();
+const stmts = {
+  getSearch:    db.prepare<[string], { data: string; cached_at: number }>('SELECT data, cached_at FROM quick_searches WHERE url = ?'),
+  setSearch:    db.prepare('INSERT OR REPLACE INTO quick_searches (url, data, cached_at) VALUES (?, ?, ?)'),
+  clearSearch:  db.prepare('DELETE FROM quick_searches'),
+  getDetail:    db.prepare<[string], { data: string; cached_at: number }>('SELECT data, cached_at FROM deep_details WHERE url = ?'),
+  setDetail:    db.prepare('INSERT OR REPLACE INTO deep_details (url, data, cached_at) VALUES (?, ?, ?)'),
+  clearDetails: db.prepare('DELETE FROM deep_details'),
+  countSearch:  db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM quick_searches'),
+  countDetails: db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM deep_details'),
+};
 
-function isFresh<T>(entry: CacheEntry<T>): boolean {
-  return Date.now() - entry.cachedAt < CACHE_TTL_MS;
+{
+  const s = stmts.countSearch.get()!.n;
+  const d = stmts.countDetails.get()!.n;
+  if (s > 0 || d > 0) console.log(`[cache] opened db — ${s} searches, ${d} listing details`);
 }
 
-function cacheAge(entry: CacheEntry<unknown>): string {
-  const mins = Math.floor((Date.now() - entry.cachedAt) / 60000);
+function isFresh(cachedAt: number): boolean {
+  return Date.now() - cachedAt < CACHE_TTL_MS;
+}
+
+function cacheAge(cachedAt: number): string {
+  const mins = Math.floor((Date.now() - cachedAt) / 60000);
   return mins === 0 ? 'less than a minute ago' : `${mins} minute${mins !== 1 ? 's' : ''} ago`;
-}
-
-if (DISK_CACHE) {
-  try {
-    const saved = JSON.parse(fs.readFileSync(DISK_CACHE_PATH, 'utf8')) as {
-      searches?: Record<string, CacheEntry<Listing[]>>;
-      details?: Record<string, CacheEntry<ListingDetail>>;
-    };
-    let s = 0, d = 0;
-    for (const [url, entry] of Object.entries(saved.searches ?? {})) { searchCache.set(url, entry); s++; }
-    for (const [url, entry] of Object.entries(saved.details ?? {})) { detailCache.set(url, entry); d++; }
-    console.log(`[cache] loaded from disk — ${s} searches, ${d} listing details`);
-  } catch {
-    console.log('[cache] disk cache enabled — no existing cache file found');
-  }
-}
-
-function saveToDisk(): void {
-  if (!DISK_CACHE) return;
-  fs.mkdirSync(path.dirname(DISK_CACHE_PATH), { recursive: true });
-  fs.writeFileSync(DISK_CACHE_PATH, JSON.stringify({
-    searches: Object.fromEntries(searchCache),
-    details: Object.fromEntries(detailCache),
-  }, null, 2));
 }
 
 // ── SSE / body helpers ────────────────────────────────────────────────────────
@@ -101,13 +104,14 @@ export default defineConfig({
           const recipe = getRecipeForUrl(url);
           if (!recipe) { sendJSON(res, 400, { error: 'No recipe found for this URL' }); return; }
 
-          const cached = searchCache.get(url);
-          if (cached && isFresh(cached)) {
-            console.log(`[cache:memory] search hit (${cacheAge(cached)})`);
+          const cachedRow = stmts.getSearch.get(url);
+          if (cachedRow && isFresh(cachedRow.cached_at)) {
+            const age = cacheAge(cachedRow.cached_at);
+            console.log(`[cache] search hit (${age})`);
             startSSE(res);
             sse(res, { type: 'criteria', filters: recipe.extractImplicitFilters(url) });
-            sse(res, { type: 'progress', message: `Loaded from cache (${cacheAge(cached)})` });
-            for (const listing of cached.data) sse(res, { type: 'listing', data: listing });
+            sse(res, { type: 'cached', age });
+            for (const listing of JSON.parse(cachedRow.data) as Listing[]) sse(res, { type: 'listing', data: listing });
             sse(res, { type: 'complete' });
             res.end(); return;
           }
@@ -123,9 +127,8 @@ export default defineConfig({
               sse(res, event);
             });
             if (listings.length > 0) {
-              searchCache.set(url, { data: listings, cachedAt: Date.now() });
-              saveToDisk();
-              console.log(`[cache:${DISK_CACHE ? 'disk' : 'memory'}] stored ${listings.length} listings`);
+              stmts.setSearch.run(url, JSON.stringify(listings), Date.now());
+              console.log(`[cache] stored ${listings.length} listings`);
             }
           } catch (err) {
             sse(res, { type: 'error', message: (err as Error).message });
@@ -150,13 +153,13 @@ export default defineConfig({
           const fromCache: { url: string; detail: ListingDetail }[] = [];
           const toScrape: Listing[] = [];
           for (const listing of listings) {
-            const cached = detailCache.get(listing.url);
-            if (cached && isFresh(cached)) fromCache.push({ url: listing.url, detail: cached.data });
+            const row = stmts.getDetail.get(listing.url);
+            if (row && isFresh(row.cached_at)) fromCache.push({ url: listing.url, detail: JSON.parse(row.data) as ListingDetail });
             else toScrape.push(listing);
           }
 
           if (toScrape.length === 0) {
-            console.log(`[cache:memory] detail hit for all ${listings.length} listings`);
+            console.log(`[cache] detail hit for all ${listings.length} listings`);
             startSSE(res);
             for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
             sse(res, { type: 'complete' });
@@ -165,21 +168,23 @@ export default defineConfig({
 
           if (isBusy) { sendJSON(res, 429, { error: 'A search is already in progress — please wait.' }); return; }
 
-          if (fromCache.length > 0) console.log(`[cache:memory] detail hit for ${fromCache.length}/${listings.length} listings`);
+          if (fromCache.length > 0) console.log(`[cache] detail hit for ${fromCache.length}/${listings.length} listings`);
 
           isBusy = true;
           startSSE(res);
           for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
 
+          const abortController = new AbortController();
+          req.on('close', () => abortController.abort());
+
           try {
             await recipe.deepSearch(toScrape, (event) => {
               if (event.type === 'detail') {
-                detailCache.set(event.url, { data: event.detail, cachedAt: Date.now() });
-                saveToDisk();
-                console.log(`[cache:${DISK_CACHE ? 'disk' : 'memory'}] stored detail for ${event.url}`);
+                stmts.setDetail.run(event.url, JSON.stringify(event.detail), Date.now());
+                console.log(`[cache] stored detail for ${event.url}`);
               }
               sse(res, event);
-            });
+            }, abortController.signal);
           } catch (err) {
             sse(res, { type: 'error', message: (err as Error).message });
           } finally {
@@ -187,6 +192,25 @@ export default defineConfig({
             res.end();
           }
           return;
+        }
+
+        // ── Cache clear ───────────────────────────────────────────────────────
+        if (req.url === '/api/cache/clear') {
+          const body = await readBody(req).catch(() => null);
+          const type = (body as { type?: string })?.type;
+          if (type === 'quick-search') {
+            const { n } = stmts.countSearch.get()!;
+            stmts.clearSearch.run();
+            console.log(`[cache] cleared quick search cache (${n} entries)`);
+            sendJSON(res, 200, { ok: true }); return;
+          }
+          if (type === 'deep-search') {
+            const { n } = stmts.countDetails.get()!;
+            stmts.clearDetails.run();
+            console.log(`[cache] cleared deep search cache (${n} entries)`);
+            sendJSON(res, 200, { ok: true }); return;
+          }
+          sendJSON(res, 400, { error: 'type must be quick-search or deep-search' }); return;
         }
 
         next();
