@@ -1,4 +1,4 @@
-# trademe-scraper
+# sifty
 
 A Node.js/TypeScript web app that scrapes TradeMe for used MacBook Pro listings, with configurable filters and full listing detail extraction (description, buy now price, reserve status, pickup info).
 

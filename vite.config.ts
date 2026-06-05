@@ -92,7 +92,7 @@ const cancelledSearches = new Set<string>();
 
 export default defineConfig({
   plugins: [{
-    name: 'trademe-api',
+    name: 'sifty-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
         if (req.method !== 'POST') { next(); return; }
