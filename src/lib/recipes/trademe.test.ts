@@ -20,6 +20,7 @@ const { getNextPage, resetPageQueue } = vi.hoisted(() => {
     return {
       on: (_: string, h: (r: unknown) => void) => { handlers.push(h); },
       off: () => {},
+      evaluate: async () => null,
       goto: async () => {
         const response = {
           url: () => 'https://api.trademe.co.nz/v1/search/general.json',
