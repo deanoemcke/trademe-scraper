@@ -1,5 +1,6 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import type { Recipe, Listing, ListingDetail, QuickSearchEvent, DeepSearchEvent } from './base';
+import { enqueue } from '../queue';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -136,6 +137,7 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
     });
 
     onEvent({ type: 'progress', message: 'Loading Facebook Marketplace…' });
+    console.log(`[facebook] fetching: ${searchUrl}`);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     console.log(`[facebook] loaded — url: ${page.url()}`);
 
@@ -208,7 +210,7 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
       if (bodyText.includes('Results from outside your search')) break;
 
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(800);
 
       if (counter.total > lastTotal) {
         onEvent({ type: 'progress', message: `Found ${counter.total} listings, loading more…` });
@@ -279,6 +281,7 @@ export function extractFBDetails(bodyText: string): Array<{ key: string; value: 
 }
 
 async function fetchFBListingDetail(page: Page, url: string): Promise<ListingDetail> {
+  console.log(`[facebook] fetching: ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(3000);
 
@@ -320,16 +323,22 @@ async function deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent)
   try {
     const ctx = await createContext();
     browser = ctx.browser;
-    const page = await ctx.context.newPage();
-    await maskHeadless(page);
 
-    for (let i = 0; i < listings.length; i++) {
-      const listing = listings[i];
-      onEvent({ type: 'progress', index: i + 1, total: listings.length, title: listing.title });
-      const detail = await fetchFBListingDetail(page, listing.url);
-      onEvent({ type: 'detail', url: listing.url, detail });
-      if (i < listings.length - 1) await page.waitForTimeout(500);
-    }
+    await Promise.all(
+      listings.map((listing, i) =>
+        enqueue(listing.url, async () => {
+          const pg = await ctx.context.newPage();
+          await maskHeadless(pg);
+          try {
+            onEvent({ type: 'progress', index: i + 1, total: listings.length, title: listing.title });
+            const detail = await fetchFBListingDetail(pg, listing.url);
+            onEvent({ type: 'detail', url: listing.url, detail });
+          } finally {
+            await pg.close();
+          }
+        })
+      )
+    );
     onEvent({ type: 'complete' });
   } catch (err) {
     onEvent({ type: 'error', message: (err as Error).message });

@@ -1,5 +1,6 @@
 import { chromium, Page, Response } from 'playwright';
 import type { Recipe, Listing, ListingDetail, QuickSearchEvent, DeepSearchEvent } from './base';
+import { enqueue } from '../queue';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -263,6 +264,7 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
   };
   page.on('response', handler);
 
+  console.log(`[trademe] fetching: ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(5000);
   page.off('response', handler);
@@ -303,6 +305,7 @@ async function quickSearch(
   try {
     onEvent({ type: 'progress', message: 'Fetching page 1…' });
     const p1Promise = waitForSearchApiResponse(page);
+    console.log(`[trademe] fetching: ${searchUrl}`);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     const { listings: p1Listings, totalCount, pageSize } = await p1Promise;
     const totalPages = Math.ceil(totalCount / pageSize);
@@ -322,19 +325,29 @@ async function quickSearch(
 
     emit(p1Listings);
 
-    for (let p = 2; p <= totalPages; p++) {
-      await page.waitForSelector('a[aria-label^="Next page"]', { timeout: 8000 }).catch(() => null);
-      const next = page.locator('a[aria-label^="Next page"]').first();
-      if (!await next.isVisible({ timeout: 3000 }).catch(() => false)) break;
+    const pageNums = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+    const extraPages = await Promise.all(pageNums.map(() => context.newPage()));
 
-      onEvent({ type: 'progress', message: `Fetching page ${p}/${totalPages}…` });
-      const nextPromise = waitForSearchApiResponse(page);
-      await next.click();
-      const { listings: nextListings } = await nextPromise;
-      if (nextListings.length === 0) break;
-      emit(nextListings);
-      await page.waitForTimeout(500);
-    }
+    await Promise.all(
+      pageNums.map((p, idx) => {
+        const u = new URL(searchUrl);
+        u.searchParams.set('page', String(p));
+        const pageUrl = u.toString();
+        return enqueue(pageUrl, async () => {
+          const pg = extraPages[idx];
+          try {
+            onEvent({ type: 'progress', message: `Fetching page ${p}/${totalPages}…` });
+            const promise = waitForSearchApiResponse(pg);
+            console.log(`[trademe] fetching: ${pageUrl}`);
+            await pg.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            const { listings } = await promise;
+            emit(listings);
+          } finally {
+            await pg.close();
+          }
+        });
+      })
+    );
 
     onEvent({ type: 'complete' });
   } catch (err) {
@@ -350,16 +363,22 @@ async function deepSearch(
 ): Promise<void> {
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
-  const page = await context.newPage();
 
   try {
-    for (let i = 0; i < listings.length; i++) {
-      const listing = listings[i];
-      onEvent({ type: 'progress', index: i + 1, total: listings.length, title: listing.title });
-      const detail = await fetchSingleListingDetail(page, listing.url);
-      onEvent({ type: 'detail', url: listing.url, detail });
-      if (i < listings.length - 1) await page.waitForTimeout(500);
-    }
+    await Promise.all(
+      listings.map((listing, i) =>
+        enqueue(listing.url, async () => {
+          const pg = await context.newPage();
+          try {
+            onEvent({ type: 'progress', index: i + 1, total: listings.length, title: listing.title });
+            const detail = await fetchSingleListingDetail(pg, listing.url);
+            onEvent({ type: 'detail', url: listing.url, detail });
+          } finally {
+            await pg.close();
+          }
+        })
+      )
+    );
     onEvent({ type: 'complete' });
   } catch (err) {
     onEvent({ type: 'error', message: (err as Error).message });

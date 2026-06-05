@@ -54,8 +54,6 @@ function cacheAge(cachedAt: number): string {
 
 // ── SSE / body helpers ────────────────────────────────────────────────────────
 
-let isBusy = false;
-
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -116,9 +114,6 @@ export default defineConfig({
             res.end(); return;
           }
 
-          if (isBusy) { sendJSON(res, 429, { error: 'A search is already in progress — please wait.' }); return; }
-
-          isBusy = true;
           startSSE(res);
           const listings: Listing[] = [];
           try {
@@ -133,7 +128,6 @@ export default defineConfig({
           } catch (err) {
             sse(res, { type: 'error', message: (err as Error).message });
           } finally {
-            isBusy = false;
             res.end();
           }
           return;
@@ -166,11 +160,8 @@ export default defineConfig({
             res.end(); return;
           }
 
-          if (isBusy) { sendJSON(res, 429, { error: 'A search is already in progress — please wait.' }); return; }
-
           if (fromCache.length > 0) console.log(`[cache] detail hit for ${fromCache.length}/${listings.length} listings`);
 
-          isBusy = true;
           startSSE(res);
           for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
 
@@ -188,7 +179,6 @@ export default defineConfig({
           } catch (err) {
             sse(res, { type: 'error', message: (err as Error).message });
           } finally {
-            isBusy = false;
             res.end();
           }
           return;
