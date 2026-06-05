@@ -13,6 +13,7 @@ interface UrlCardState {
   el: HTMLElement;
   input: HTMLInputElement;
   searchBtn: HTMLButtonElement;
+  removeBtn: HTMLButtonElement;
   criteriaEl: HTMLElement;
   countEl: HTMLElement;
   cacheStatusEl: HTMLElement;
@@ -20,11 +21,12 @@ interface UrlCardState {
   searched: boolean;
   searchedUrl: string;
   searching: boolean;
+  listingUrls: string[];
 }
 
 let allListings: ListingItem[] = [];
 let isDeepSearchRunning = false;
-const seenUrls = new Set<string>();
+const listingsByUrl = new Map<string, ListingItem>();
 const urlCardStates: UrlCardState[] = [];
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -97,7 +99,7 @@ function createUrlCard(): UrlCardState {
   const card = document.createElement('div');
   card.className = 'card url-card';
   card.innerHTML = `
-    <div class="card-label">URL ${idx + 1}<span class="url-card-count"></span></div>
+    <div class="card-label" style="display:flex;align-items:center">URL ${idx + 1}<span class="url-card-count"></span><button class="btn btn-ghost url-remove-btn hidden" style="margin-left:auto;padding:0.15rem 0.45rem;line-height:1" title="Remove">✕</button></div>
     <div class="url-row">
       <input type="url" class="url-input" placeholder="Paste search URL…" />
       <button class="btn btn-primary url-search-btn" disabled>${SEARCH_ICON} Search</button>
@@ -109,12 +111,13 @@ function createUrlCard(): UrlCardState {
 
   const input = card.querySelector<HTMLInputElement>('.url-input')!;
   const searchBtn = card.querySelector<HTMLButtonElement>('.url-search-btn')!;
+  const removeBtn = card.querySelector<HTMLButtonElement>('.url-remove-btn')!;
   const criteriaEl = card.querySelector<HTMLElement>('.url-criteria')!;
   const countEl = card.querySelector<HTMLElement>('.url-card-count')!;
   const cacheStatusEl = card.querySelector<HTMLElement>('.cache-status')!;
   const statusEl = card.querySelector<HTMLElement>('.url-card-status')!;
 
-  const state: UrlCardState = { el: card, input, searchBtn, criteriaEl, countEl, cacheStatusEl, statusEl, searched: false, searchedUrl: '', searching: false };
+  const state: UrlCardState = { el: card, input, searchBtn, removeBtn, criteriaEl, countEl, cacheStatusEl, statusEl, searched: false, searchedUrl: '', searching: false, listingUrls: [] };
   urlCardStates.push(state);
 
   input.addEventListener('input', () => updateCardSearchBtn(state));
@@ -122,17 +125,20 @@ function createUrlCard(): UrlCardState {
     if (e.key === 'Enter' && !searchBtn.disabled) searchUrlCard(state);
   });
   searchBtn.addEventListener('click', () => searchUrlCard(state));
+  removeBtn.addEventListener('click', () => removeUrlCard(state));
 
+  updateRemoveButtons();
   return state;
 }
 
 function resetAllResults(): void {
   allListings = [];
-  seenUrls.clear();
+  listingsByUrl.clear();
   el('listingsContainer').innerHTML = '';
   el('resultCount').textContent = '0';
   el('resultsSection').classList.add('hidden');
   for (const s of urlCardStates) {
+    s.listingUrls = [];
     s.searched = false;
     s.searchedUrl = '';
     s.countEl.textContent = '';
@@ -148,11 +154,68 @@ function resetAllResults(): void {
   updateDeepBtn();
 }
 
+function rebuildListings(): void {
+  const seen = new Set<string>();
+  allListings = [];
+  for (const state of urlCardStates) {
+    for (const url of state.listingUrls) {
+      if (!seen.has(url) && listingsByUrl.has(url)) {
+        seen.add(url);
+        allListings.push(listingsByUrl.get(url)!);
+      }
+    }
+  }
+}
+
+function updateRemoveButtons(): void {
+  const show = urlCardStates.length > 1;
+  for (const s of urlCardStates) s.removeBtn.classList.toggle('hidden', !show);
+}
+
+function resetCardForResearch(state: UrlCardState): void {
+  const otherUrls = new Set(urlCardStates.flatMap(s => s === state ? [] : s.listingUrls));
+  for (const url of state.listingUrls) {
+    if (!otherUrls.has(url)) {
+      document.getElementById(cardId(url))?.remove();
+      listingsByUrl.delete(url);
+    }
+  }
+  state.listingUrls = [];
+  state.searched = false;
+  state.searchedUrl = '';
+  state.countEl.textContent = '';
+  state.criteriaEl.querySelector('.criteria-grid')!.innerHTML = '';
+  state.criteriaEl.classList.add('hidden');
+  state.cacheStatusEl.classList.add('hidden');
+  state.cacheStatusEl.innerHTML = '';
+  state.statusEl.classList.add('hidden');
+  state.input.readOnly = false;
+  rebuildListings();
+  if (allListings.length === 0) el('resultsSection').classList.add('hidden');
+  updateDeepBtn();
+}
+
+function removeUrlCard(state: UrlCardState): void {
+  const otherUrls = new Set(urlCardStates.flatMap(s => s === state ? [] : s.listingUrls));
+  for (const url of state.listingUrls) {
+    if (!otherUrls.has(url)) {
+      document.getElementById(cardId(url))?.remove();
+      listingsByUrl.delete(url);
+    }
+  }
+  state.el.remove();
+  urlCardStates.splice(urlCardStates.indexOf(state), 1);
+  rebuildListings();
+  if (allListings.length === 0) el('resultsSection').classList.add('hidden');
+  updateRemoveButtons();
+  applyClientFilters();
+}
+
 async function searchUrlCard(state: UrlCardState): Promise<void> {
   const url = state.input.value.trim();
   if (!canHandleUrl(url)) return;
 
-  if (state.searched) resetAllResults();
+  if (state.searched) resetCardForResearch(state);
 
   el('resultsSection').classList.remove('hidden');
   state.searching = true;
@@ -178,11 +241,14 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
       } else if (ev.type === 'listing') {
         const listing = ev.data as Listing;
         totalFound++;
-        if (seenUrls.has(listing.url)) return;
-        seenUrls.add(listing.url);
-        allListings.push({ data: listing, deepSearched: false });
-        renderCard(listing);
-        el('resultCount').textContent = String(allListings.length);
+        state.listingUrls.push(listing.url);
+        if (!listingsByUrl.has(listing.url)) {
+          const item: ListingItem = { data: listing, deepSearched: false };
+          listingsByUrl.set(listing.url, item);
+          allListings.push(item);
+          renderCard(listing);
+          el('resultCount').textContent = String(allListings.length);
+        }
       } else if (ev.type === 'error') {
         searchError = true;
         setCardStatus(state, ev.message as string, 'error');
