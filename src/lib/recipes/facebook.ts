@@ -232,15 +232,18 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
       const bodyText: string = await page.evaluate(() => document.body.innerText);
       if (bodyText.includes('Results from outside your search')) break;
 
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-      await page.waitForTimeout(800);
+      // Simulate real scroll events — window.scrollTo alone doesn't trigger FB's
+      // infinite scroll listener; mouse wheel + End key are more reliable.
+      await page.mouse.wheel(0, 3000);
+      await page.keyboard.press('End');
+      await page.waitForTimeout(1500);
 
       if (counter.total > lastTotal) {
         onEvent({ type: 'progress', message: `Found ${counter.total} listings, loading more…` });
         noNewCount = 0;
         lastTotal = counter.total;
       } else {
-        if (++noNewCount >= 3) break;
+        if (++noNewCount >= 5) break;
       }
     }
 
