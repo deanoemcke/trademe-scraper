@@ -16,6 +16,7 @@ interface UrlCardState {
   criteriaEl: HTMLElement;
   countEl: HTMLElement;
   cacheStatusEl: HTMLElement;
+  statusEl: HTMLElement;
   searched: boolean;
   searchedUrl: string;
 }
@@ -54,6 +55,16 @@ function getFilters(): FrontendFilters {
   };
 }
 
+
+function setCardStatus(state: UrlCardState, msg: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
+  const bar = state.statusEl;
+  if (!msg) { bar.classList.add('hidden'); return; }
+  bar.className = `url-card-status ${type}`;
+  bar.innerHTML = type === 'info'
+    ? `<span class="spinner"></span><span>${esc(msg)}</span>`
+    : `<span>${esc(msg)}</span>`;
+  bar.classList.remove('hidden');
+}
 
 function setStatus(msg: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
   const bar = el('statusBar');
@@ -103,6 +114,7 @@ function createUrlCard(): UrlCardState {
       <input type="url" class="url-input" placeholder="Paste TradeMe search URL…" />
       <button class="btn btn-primary url-search-btn" disabled>${SEARCH_ICON} Search</button>
     </div>
+    <div class="url-card-status hidden"></div>
     <div class="url-criteria hidden"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
   `;
   el('urlCardsContainer').appendChild(card);
@@ -112,8 +124,9 @@ function createUrlCard(): UrlCardState {
   const criteriaEl = card.querySelector<HTMLElement>('.url-criteria')!;
   const countEl = card.querySelector<HTMLElement>('.url-card-count')!;
   const cacheStatusEl = card.querySelector<HTMLElement>('.cache-status')!;
+  const statusEl = card.querySelector<HTMLElement>('.url-card-status')!;
 
-  const state: UrlCardState = { el: card, input, searchBtn, criteriaEl, countEl, cacheStatusEl, searched: false, searchedUrl: '' };
+  const state: UrlCardState = { el: card, input, searchBtn, criteriaEl, countEl, cacheStatusEl, statusEl, searched: false, searchedUrl: '' };
   urlCardStates.push(state);
 
   input.addEventListener('input', () => {
@@ -142,6 +155,7 @@ function resetAllResults(): void {
     s.criteriaEl.classList.add('hidden');
     s.cacheStatusEl.classList.add('hidden');
     s.cacheStatusEl.innerHTML = '';
+    s.statusEl.classList.add('hidden');
     s.input.readOnly = false;
     s.searchBtn.disabled = !canHandleUrl(s.input.value.trim());
   }
@@ -156,10 +170,11 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
 
   el('resultsSection').classList.remove('hidden');
   setBusy(true);
-  setStatus('Fetching listings…');
+  setCardStatus(state, 'Fetching listings…');
 
-  const countBefore = allListings.length;
+  let totalFound = 0;
   let cachedAge = '';
+  let searchError = false;
   try {
     await streamPost('/api/quick-search', { url }, (ev) => {
       if (ev.type === 'criteria') {
@@ -171,20 +186,23 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
       } else if (ev.type === 'cached') {
         cachedAge = ev.age as string;
       } else if (ev.type === 'progress') {
-        setStatus(ev.message as string);
+        setCardStatus(state, ev.message as string);
       } else if (ev.type === 'listing') {
         const listing = ev.data as Listing;
+        totalFound++;
         if (seenUrls.has(listing.url)) return;
         seenUrls.add(listing.url);
         allListings.push({ data: listing, deepSearched: false });
         renderCard(listing);
         el('resultCount').textContent = String(allListings.length);
       } else if (ev.type === 'error') {
-        setStatus(ev.message as string, 'error');
+        searchError = true;
+        setCardStatus(state, ev.message as string, 'error');
       }
     });
   } catch (err) {
-    setStatus((err as Error).message, 'error');
+    searchError = true;
+    setCardStatus(state, (err as Error).message, 'error');
   }
 
   state.searched = true;
@@ -198,11 +216,11 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
     state.cacheStatusEl.classList.remove('hidden');
     state.cacheStatusEl.querySelector('.cache-clear-btn')!.addEventListener('click', clearQuickSearchCache);
   }
-  const added = allListings.length - countBefore;
-  state.countEl.textContent = `— ${added} listing${added !== 1 ? 's' : ''}`;
+  state.countEl.textContent = `— ${totalFound} listing${totalFound !== 1 ? 's' : ''}`;
 
-  setStatus(`${allListings.length} listing${allListings.length !== 1 ? 's' : ''} found`, 'success');
-  setTimeout(() => setStatus(null), 3000);
+  if (!searchError) {
+    setCardStatus(state, `${totalFound} listing${totalFound !== 1 ? 's' : ''} found`, 'success');
+  }
   setBusy(false);
 
   if (allListings.length > 0) {
