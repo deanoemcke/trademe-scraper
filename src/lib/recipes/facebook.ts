@@ -202,6 +202,28 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
     console.log(`[facebook] observer injected — initial: ${counter.total} listings`);
     if (counter.total > 0) onEvent({ type: 'progress', message: `Found ${counter.total} listings…` });
 
+    // The login wall modal is present in the DOM from page load — check immediately after
+    // the observer fires so we can skip the scroll loop and report the partial results.
+    const loginWallDetected = await page.evaluate(() => {
+      return (
+        !!document.getElementById('login_popup_cta_form') ||
+        !!document.querySelector('form[action*="/login/device-based/"]') ||
+        !!document.querySelector('input[name="email"]') ||
+        !!document.querySelector('input[name="pass"]')
+      );
+    }).catch(() => false);
+
+    console.log(`[facebook] loginWallDetected: ${loginWallDetected}`);
+
+    if (loginWallDetected) {
+      console.log(`[facebook] login wall detected — only ${counter.total} listings available`);
+      onEvent({
+        type: 'error',
+        message: `Login wall detected — only ${counter.total} listing${counter.total !== 1 ? 's' : ''} loaded. Set the FB_COOKIES environment variable to get full results.`,
+      });
+      return;
+    }
+
     // Scroll loop — just drives scrolling; extraction is handled by the observer above
     let noNewCount = 0;
     let lastTotal = 0;
