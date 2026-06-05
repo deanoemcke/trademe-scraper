@@ -30,7 +30,8 @@ interface UrlCardState {
   searched: boolean;
   searchedUrl: string;
   searching: boolean;
-  abortController: AbortController | null;
+  searchId: string | null;
+  cancellationRequested: boolean;
   listingUrls: string[];
 }
 
@@ -79,6 +80,32 @@ function setCardStatus(state: UrlCardState, msg: string | null, type: 'info' | '
   bar.classList.remove('hidden');
 }
 
+function setSearchingStatus(state: UrlCardState, msg: string): void {
+  const bar = state.statusEl;
+  bar.className = 'url-card-status info';
+  bar.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`;
+  if (!state.cancellationRequested) {
+    const btn = document.createElement('button');
+    btn.className = 'cache-clear-btn';
+    btn.style.marginLeft = '0.5rem';
+    btn.textContent = 'cancel';
+    btn.addEventListener('click', () => cancelSearch(state));
+    bar.appendChild(btn);
+  }
+  bar.classList.remove('hidden');
+}
+
+function cancelSearch(state: UrlCardState): void {
+  if (!state.searching || state.cancellationRequested) return;
+  state.cancellationRequested = true;
+  setSearchingStatus(state, 'Cancelling…');
+  fetch('/api/cancel-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ searchId: state.searchId }),
+  }).catch(() => null);
+}
+
 function setStatus(msg: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
   const bar = el('statusBar');
   if (!msg) { bar.classList.add('hidden'); return; }
@@ -89,18 +116,10 @@ function setStatus(msg: string | null, type: 'info' | 'success' | 'error' = 'inf
   bar.classList.remove('hidden');
 }
 
-const CANCEL_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
-
 function updateCardSearchBtn(state: UrlCardState): void {
-  if (state.searching) {
-    state.searchBtn.disabled = false;
-    state.searchBtn.innerHTML = `${CANCEL_ICON} Cancel`;
-    return;
-  }
   const current = state.input.value.trim();
   const alreadySearched = state.searched && current === state.searchedUrl;
-  state.searchBtn.disabled = isDeepSearchRunning || !canHandleUrl(current) || alreadySearched;
-  state.searchBtn.innerHTML = `${SEARCH_ICON} Search`;
+  state.searchBtn.disabled = state.searching || isDeepSearchRunning || !canHandleUrl(current) || alreadySearched;
 }
 
 function setDeepSearchBusy(busy: boolean): void {
@@ -135,17 +154,14 @@ function createUrlCard(): UrlCardState {
   const cacheStatusEl = card.querySelector<HTMLElement>('.cache-status')!;
   const statusEl = card.querySelector<HTMLElement>('.url-card-status')!;
 
-  const state: UrlCardState = { el: card, input, searchBtn, removeBtn, criteriaEl, countEl, cacheStatusEl, statusEl, searched: false, searchedUrl: '', searching: false, abortController: null, listingUrls: [] };
+  const state: UrlCardState = { el: card, input, searchBtn, removeBtn, criteriaEl, countEl, cacheStatusEl, statusEl, searched: false, searchedUrl: '', searching: false, searchId: null, cancellationRequested: false, listingUrls: [] };
   urlCardStates.push(state);
 
   input.addEventListener('input', () => updateCardSearchBtn(state));
   input.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !searchBtn.disabled) searchUrlCard(state);
   });
-  searchBtn.addEventListener('click', () => {
-    if (state.searching) state.abortController?.abort();
-    else searchUrlCard(state);
-  });
+  searchBtn.addEventListener('click', () => searchUrlCard(state));
   removeBtn.addEventListener('click', () => removeUrlCard(state));
 
   updateRemoveButtons();
@@ -169,6 +185,8 @@ function resetAllResults(): void {
     s.cacheStatusEl.innerHTML = '';
     s.statusEl.classList.add('hidden');
     s.searching = false;
+    s.searchId = null;
+    s.cancellationRequested = false;
     s.input.readOnly = false;
     updateCardSearchBtn(s);
   }
@@ -241,17 +259,17 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
 
   el('resultsSection').classList.remove('hidden');
   state.searching = true;
-  state.abortController = new AbortController();
+  state.searchId = crypto.randomUUID();
+  state.cancellationRequested = false;
   updateCardSearchBtn(state);
   updateDeepBtn();
-  setCardStatus(state, 'Fetching listings…');
+  setSearchingStatus(state, 'Fetching listings…');
 
   let totalFound = 0;
   let cachedAge = '';
   let searchError = false;
-  let wasCancelled = false;
   try {
-    await streamPost('/api/quick-search', { url }, (ev) => {
+    await streamPost('/api/quick-search', { url, searchId: state.searchId }, (ev) => {
       if (ev.type === 'criteria') {
         const filters = ev.filters as Array<[string, string]>;
         state.criteriaEl.querySelector('.criteria-grid')!.innerHTML = filters
@@ -261,7 +279,7 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
       } else if (ev.type === 'cached') {
         cachedAge = ev.age as string;
       } else if (ev.type === 'progress') {
-        setCardStatus(state, ev.message as string);
+        if (!state.cancellationRequested) setSearchingStatus(state, ev.message as string);
       } else if (ev.type === 'listing') {
         const listing = ev.data as Listing;
         totalFound++;
@@ -277,21 +295,19 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
         searchError = true;
         setCardStatus(state, ev.message as string, 'error');
       }
-    }, state.abortController.signal);
+    });
   } catch (err) {
-    if ((err as Error).name === 'AbortError') {
-      wasCancelled = true;
-    } else {
-      searchError = true;
-      setCardStatus(state, (err as Error).message, 'error');
-    }
+    searchError = true;
+    setCardStatus(state, (err as Error).message, 'error');
   }
 
-  state.abortController = null;
   state.searching = false;
+  const wasCancelled = state.cancellationRequested;
+  state.searchId = null;
+  state.cancellationRequested = false;
 
   if (wasCancelled) {
-    setCardStatus(state, `Cancelled — ${totalFound} listing${totalFound !== 1 ? 's' : ''} loaded`, 'success');
+    setCardStatus(state, `Cancelled — ${totalFound} listing${totalFound !== 1 ? 's' : ''} loaded`, 'error');
     updateCardSearchBtn(state);
     updateDeepBtn();
     if (allListings.length > 0) applyClientFilters();
@@ -418,13 +434,11 @@ async function streamPost(
   endpoint: string,
   body: unknown,
   onData: (data: Record<string, unknown>) => void,
-  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
-    signal,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };

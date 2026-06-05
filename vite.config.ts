@@ -86,6 +86,8 @@ function sendJSON(res: ServerResponse, status: number, body: unknown): void {
   res.end(json);
 }
 
+const cancelledSearches = new Set<string>();
+
 // ── Vite config ───────────────────────────────────────────────────────────────
 
 export default defineConfig({
@@ -95,10 +97,18 @@ export default defineConfig({
       server.middlewares.use(async (req, res, next) => {
         if (req.method !== 'POST') { next(); return; }
 
+        // ── Cancel search ─────────────────────────────────────────────────────
+        if (req.url === '/api/cancel-search') {
+          const body = await readBody(req).catch(() => null);
+          const searchId = (body as { searchId?: string })?.searchId;
+          if (searchId) cancelledSearches.add(searchId);
+          sendJSON(res, 200, { ok: true }); return;
+        }
+
         // ── Quick search ──────────────────────────────────────────────────────
         if (req.url === '/api/quick-search') {
           const body = await readBody(req).catch(() => null);
-          const url = (body as { url?: string })?.url;
+          const { url, searchId } = (body ?? {}) as { url?: string; searchId?: string };
           if (!url) { sendJSON(res, 400, { error: 'url is required' }); return; }
 
           const recipe = getRecipeForUrl(url);
@@ -117,22 +127,23 @@ export default defineConfig({
           }
 
           startSSE(res);
-          let cancelled = false;
-          req.on('close', () => { cancelled = true; });
+          if (searchId) req.on('close', () => cancelledSearches.add(searchId));
+          const isCancelled = () => searchId ? cancelledSearches.has(searchId) : false;
           const listings: Listing[] = [];
           try {
             await recipe.quickSearch(url, (event) => {
-              if (cancelled) return;
+              if (isCancelled()) return;
               if (event.type === 'listing') listings.push(event.data);
               try { sse(res, event); } catch { /* client disconnected */ }
-            }, () => cancelled);
-            if (!cancelled && listings.length > 0) {
+            }, isCancelled);
+            if (!isCancelled() && listings.length > 0) {
               stmts.setSearch.run(url, JSON.stringify(listings), Date.now());
               console.log(`[cache] stored ${listings.length} listings`);
             }
           } catch (err) {
-            if (!cancelled) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
+            if (!isCancelled()) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
           } finally {
+            if (searchId) cancelledSearches.delete(searchId);
             try { res.end(); } catch { /* client already disconnected */ }
           }
           return;
