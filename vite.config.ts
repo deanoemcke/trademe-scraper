@@ -165,9 +165,6 @@ export default defineConfig({
           startSSE(res);
           for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
 
-          const abortController = new AbortController();
-          req.on('close', () => abortController.abort());
-
           try {
             await recipe.deepSearch(toScrape, (event) => {
               if (event.type === 'detail') {
@@ -175,7 +172,7 @@ export default defineConfig({
                 console.log(`[cache] stored detail for ${event.url}`);
               }
               sse(res, event);
-            }, abortController.signal);
+            });
           } catch (err) {
             sse(res, { type: 'error', message: (err as Error).message });
           } finally {
