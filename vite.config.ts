@@ -200,6 +200,69 @@ export default defineConfig({
           sendJSON(res, 400, { error: 'type must be quick-search or deep-search' }); return;
         }
 
+        // ── AI filter ─────────────────────────────────────────────────────────
+        if (req.url === '/api/ai-filter') {
+          const body = await readBody(req).catch(() => null);
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const listings = (body as any)?.listings as Array<{ url: string; title: string; price: string; location: string; description: string }> | undefined;
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const prompt = (body as any)?.prompt as string | undefined;
+
+          if (!Array.isArray(listings) || listings.length === 0 || !prompt?.trim()) {
+            sendJSON(res, 400, { error: 'listings and prompt are required' }); return;
+          }
+
+          const apiKey = process.env.ANTHROPIC_API_KEY;
+          if (!apiKey) {
+            sendJSON(res, 500, { error: 'ANTHROPIC_API_KEY is not set' }); return;
+          }
+
+          const numberedListings = listings.map((l, i) =>
+            `${i + 1}. Title: "${l.title}" | Price: ${l.price} | Location: ${l.location}${l.description ? ` | Description: ${l.description}` : ''}`
+          ).join('\n');
+
+          const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': apiKey,
+              'anthropic-version': '2023-06-01',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 2048,
+              system: 'You are filtering marketplace listings. For each listing decide if it matches the user\'s criteria. Respond ONLY with a JSON array, one object per listing in order: [{"index":1,"pass":true,"reason":null},…]. "reason" is a short phrase when pass is false, otherwise null.',
+              messages: [{ role: 'user', content: `Criteria: ${prompt}\n\nListings:\n${numberedListings}` }],
+            }),
+          });
+
+          if (!anthropicRes.ok) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const errBody = await anthropicRes.json().catch(() => ({})) as any;
+            sendJSON(res, 500, { error: `Anthropic API error: ${errBody?.error?.message ?? anthropicRes.status}` }); return;
+          }
+
+          const aiData = await anthropicRes.json() as { content: Array<{ type: string; text: string }> };
+          const text = aiData.content.find(c => c.type === 'text')?.text ?? '';
+
+          let parsed: Array<{ index: number; pass: boolean; reason: string | null }>;
+          try {
+            parsed = JSON.parse(text.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '').trim());
+          } catch {
+            sendJSON(res, 500, { error: 'Failed to parse AI response' }); return;
+          }
+
+          const results = parsed.map(r => ({
+            url: listings[r.index - 1]?.url ?? '',
+            pass: r.pass,
+            reason: r.reason ?? null,
+          })).filter(r => r.url);
+
+          console.log(`[ai-filter] checked ${listings.length} listings, ${results.filter(r => !r.pass).length} rejected`);
+          sendJSON(res, 200, { results });
+          return;
+        }
+
         next();
       });
     },
