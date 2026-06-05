@@ -19,10 +19,11 @@ interface UrlCardState {
   statusEl: HTMLElement;
   searched: boolean;
   searchedUrl: string;
+  searching: boolean;
 }
 
 let allListings: ListingItem[] = [];
-let isRunning = false;
+let isDeepSearchRunning = false;
 const seenUrls = new Set<string>();
 const urlCardStates: UrlCardState[] = [];
 
@@ -76,13 +77,15 @@ function setStatus(msg: string | null, type: 'info' | 'success' | 'error' = 'inf
   bar.classList.remove('hidden');
 }
 
-function setBusy(busy: boolean): void {
-  isRunning = busy;
-  for (const state of urlCardStates) {
-    const current = state.input.value.trim();
-    const alreadySearched = state.searched && current === state.searchedUrl;
-    state.searchBtn.disabled = busy || !canHandleUrl(current) || alreadySearched;
-  }
+function updateCardSearchBtn(state: UrlCardState): void {
+  const current = state.input.value.trim();
+  const alreadySearched = state.searched && current === state.searchedUrl;
+  state.searchBtn.disabled = state.searching || isDeepSearchRunning || !canHandleUrl(current) || alreadySearched;
+}
+
+function setDeepSearchBusy(busy: boolean): void {
+  isDeepSearchRunning = busy;
+  for (const state of urlCardStates) updateCardSearchBtn(state);
   updateDeepBtn();
 }
 
@@ -111,7 +114,7 @@ function createUrlCard(): UrlCardState {
   card.innerHTML = `
     <div class="card-label">URL ${idx + 1}<span class="url-card-count"></span></div>
     <div class="url-row">
-      <input type="url" class="url-input" placeholder="Paste TradeMe search URL…" />
+      <input type="url" class="url-input" placeholder="Paste search URL…" />
       <button class="btn btn-primary url-search-btn" disabled>${SEARCH_ICON} Search</button>
     </div>
     <div class="url-card-status hidden"></div>
@@ -126,13 +129,10 @@ function createUrlCard(): UrlCardState {
   const cacheStatusEl = card.querySelector<HTMLElement>('.cache-status')!;
   const statusEl = card.querySelector<HTMLElement>('.url-card-status')!;
 
-  const state: UrlCardState = { el: card, input, searchBtn, criteriaEl, countEl, cacheStatusEl, statusEl, searched: false, searchedUrl: '' };
+  const state: UrlCardState = { el: card, input, searchBtn, criteriaEl, countEl, cacheStatusEl, statusEl, searched: false, searchedUrl: '', searching: false };
   urlCardStates.push(state);
 
-  input.addEventListener('input', () => {
-    const current = input.value.trim();
-    searchBtn.disabled = isRunning || !canHandleUrl(current) || (state.searched && current === state.searchedUrl);
-  });
+  input.addEventListener('input', () => updateCardSearchBtn(state));
   input.addEventListener('keydown', (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !searchBtn.disabled) searchUrlCard(state);
   });
@@ -156,8 +156,9 @@ function resetAllResults(): void {
     s.cacheStatusEl.classList.add('hidden');
     s.cacheStatusEl.innerHTML = '';
     s.statusEl.classList.add('hidden');
+    s.searching = false;
     s.input.readOnly = false;
-    s.searchBtn.disabled = !canHandleUrl(s.input.value.trim());
+    updateCardSearchBtn(s);
   }
   updateDeepBtn();
 }
@@ -169,7 +170,9 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   if (state.searched) resetAllResults();
 
   el('resultsSection').classList.remove('hidden');
-  setBusy(true);
+  state.searching = true;
+  updateCardSearchBtn(state);
+  updateDeepBtn();
   setCardStatus(state, 'Fetching listings…');
 
   let totalFound = 0;
@@ -221,10 +224,10 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   if (!searchError) {
     setCardStatus(state, `${totalFound} listing${totalFound !== 1 ? 's' : ''} found`, 'success');
   }
-  setBusy(false);
+  state.searching = false;
+  updateDeepBtn();
 
   if (allListings.length > 0) {
-    el('addUrlBtn').classList.remove('hidden');
     applyClientFilters();
   }
 }
@@ -251,7 +254,7 @@ function updateDeepBtn(): void {
   const hasUnscraped = allListings.some(
     item => !item.deepSearched && matchesFilters(item.data, filters)
   );
-  btn.disabled = isRunning || !hasUnscraped;
+  btn.disabled = isDeepSearchRunning || urlCardStates.some(s => s.searching) || !hasUnscraped;
 
   const hasDeepSearched = allListings.some(item => item.deepSearched);
   el('clearDeepCacheBtn').classList.toggle('hidden', !hasDeepSearched);
@@ -490,7 +493,7 @@ async function runDeepSearch(): Promise<void> {
 
   deepAbortController = new AbortController();
   setDeepBtnCancelling();
-  setBusy(true);
+  setDeepSearchBusy(true);
   let hiddenByDescription = 0;
 
   for (const listing of toScrape) {
@@ -549,7 +552,7 @@ async function runDeepSearch(): Promise<void> {
     restoreDeepBtn();
   }
 
-  setBusy(false);
+  setDeepSearchBusy(false);
 }
 
 // ── Event listeners ───────────────────────────────────────────────────────────
