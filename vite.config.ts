@@ -117,20 +117,23 @@ export default defineConfig({
           }
 
           startSSE(res);
+          let cancelled = false;
+          req.on('close', () => { cancelled = true; });
           const listings: Listing[] = [];
           try {
             await recipe.quickSearch(url, (event) => {
+              if (cancelled) return;
               if (event.type === 'listing') listings.push(event.data);
-              sse(res, event);
-            });
-            if (listings.length > 0) {
+              try { sse(res, event); } catch { /* client disconnected */ }
+            }, () => cancelled);
+            if (!cancelled && listings.length > 0) {
               stmts.setSearch.run(url, JSON.stringify(listings), Date.now());
               console.log(`[cache] stored ${listings.length} listings`);
             }
           } catch (err) {
-            sse(res, { type: 'error', message: (err as Error).message });
+            if (!cancelled) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
           } finally {
-            res.end();
+            try { res.end(); } catch { /* client already disconnected */ }
           }
           return;
         }

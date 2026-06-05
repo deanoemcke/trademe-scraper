@@ -118,7 +118,7 @@ function processRawListing(
 
 // ── Quick search ──────────────────────────────────────────────────────────────
 
-async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent) => void): Promise<void> {
+async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent) => void, isCancelled?: () => boolean): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
   let browser: Browser | undefined;
@@ -206,6 +206,7 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
     let noNewCount = 0;
     let lastTotal = 0;
     for (;;) {
+      if (isCancelled?.()) break;
       const bodyText: string = await page.evaluate(() => document.body.innerText);
       if (bodyText.includes('Results from outside your search')) break;
 

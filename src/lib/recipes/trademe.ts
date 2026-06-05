@@ -323,7 +323,8 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
 
 async function quickSearch(
   searchUrl: string,
-  onEvent: (event: QuickSearchEvent) => void
+  onEvent: (event: QuickSearchEvent) => void,
+  isCancelled?: () => boolean
 ): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
@@ -380,6 +381,7 @@ async function quickSearch(
         const pageUrl = u.toString();
         return enqueue(pageUrl, async () => {
           const pg = extraPages[idx];
+          if (isCancelled?.()) { await pg.close(); return; }
           try {
             onEvent({ type: 'progress', message: `Fetching page ${p}/${totalPages}…` });
             const promise = waitForSearchApiResponse(pg);

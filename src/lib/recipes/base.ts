@@ -37,6 +37,6 @@ export interface Recipe {
   readonly name: string;
   matches(url: string): boolean;
   extractImplicitFilters(url: string): Array<[string, string]>;
-  quickSearch(url: string, onEvent: (event: QuickSearchEvent) => void): Promise<void>;
+  quickSearch(url: string, onEvent: (event: QuickSearchEvent) => void, isCancelled?: () => boolean): Promise<void>;
   deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent) => void): Promise<void>;
 }
