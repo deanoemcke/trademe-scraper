@@ -498,13 +498,29 @@ export default defineConfig({
             });
             if (urls.length === 0) { sendJSON(res, 500, { error: 'AI returned no valid specific categories' }); return; }
 
+            // Append a Facebook Marketplace URL
+            const fbSearchTerm = ((step1.name as string | undefined)?.trim()) || discPrompt.trim();
+            const fbParams = new URLSearchParams();
+            fbParams.set('query', fbSearchTerm);
+            if (discMaxPrice) fbParams.set('maxPrice', String(discMaxPrice));
+            if (discFulfillment === 'pickup') fbParams.set('deliveryMethod', 'local_pick_up');
+            else if (discFulfillment === 'shipping') fbParams.set('deliveryMethod', 'shipping');
+            fbParams.set('exact', 'false');
+            fbParams.set('sortBy', 'creation_time_descend');
+            let fbLocationSegment = '';
+            if (pickupOnly && discRegionValue) {
+              const region = regions.find(r => String(r.tradeMeRegionId) === discRegionValue);
+              if (region?.facebookLocation) fbLocationSegment = `${region.facebookLocation}/`;
+            }
+            urls.push(`https://www.facebook.com/marketplace/${fbLocationSegment}search?${fbParams.toString()}`);
+
             const filters = {
               maxPrice: discMaxPrice,
               minPrice: undefined,
               shippingAvailable: !pickupOnly,
               pickupAvailable: true,
             };
-            console.log(`[discover] "${discPrompt}" → step1: ${chosenTop2.join(', ')} → ${urls.length} URL(s), name="${step1.name}"`);
+            console.log(`[discover] "${discPrompt}" → step1: ${chosenTop2.join(', ')} → ${urls.length} URL(s) (incl. Facebook), name="${step1.name}"`);
             sendJSON(res, 200, { urls, filters, name: step1.name ?? discPrompt.trim() });
           } catch (err) {
             sendJSON(res, 500, { error: (err as Error).message });
