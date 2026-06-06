@@ -1,10 +1,11 @@
 export interface Listing {
   title: string;
-  price: string;
+  price: number | null;
+  priceDisplay: string;
   location: string;
   url: string;
   thumbnailUrl?: string;
-  allowsPickups?: number;
+  fulfillment?: { pickupAvailable: boolean; shippingAvailable: boolean };
   description?: string;
   isAuction?: boolean;
 }

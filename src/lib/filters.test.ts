@@ -14,10 +14,11 @@ const defaultFilters: FrontendFilters = {
 function makeListing(overrides: Partial<Listing> = {}): Listing {
   return {
     title: 'MacBook Pro 14" M1 Pro',
-    price: '$1,500',
+    price: 1500,
+    priceDisplay: '$1,500',
     location: 'Auckland City, Auckland',
     url: `https://www.trademe.co.nz/a/marketplace/listing/${Math.random()}`,
-    allowsPickups: 3,
+    fulfillment: { pickupAvailable: true, shippingAvailable: true },
     ...overrides,
   };
 }
@@ -49,13 +50,13 @@ describe('matchesFilters', () => {
   });
 
   it('filters by minPrice', () => {
-    expect(matchesFilters(makeListing({ price: '$900' }),  { ...defaultFilters, minPrice: 1000 })).toBe(false);
-    expect(matchesFilters(makeListing({ price: '$1,000' }), { ...defaultFilters, minPrice: 1000 })).toBe(true);
+    expect(matchesFilters(makeListing({ price: 900,   priceDisplay: '$900' }),   { ...defaultFilters, minPrice: 1000 })).toBe(false);
+    expect(matchesFilters(makeListing({ price: 1000,  priceDisplay: '$1,000' }), { ...defaultFilters, minPrice: 1000 })).toBe(true);
   });
 
   it('filters by maxPrice', () => {
-    expect(matchesFilters(makeListing({ price: '$2,001' }), { ...defaultFilters, maxPrice: 2000 })).toBe(false);
-    expect(matchesFilters(makeListing({ price: '$2,000' }), { ...defaultFilters, maxPrice: 2000 })).toBe(true);
+    expect(matchesFilters(makeListing({ price: 2001,  priceDisplay: '$2,001' }), { ...defaultFilters, maxPrice: 2000 })).toBe(false);
+    expect(matchesFilters(makeListing({ price: 2000,  priceDisplay: '$2,000' }), { ...defaultFilters, maxPrice: 2000 })).toBe(true);
   });
 
   it('filters by keywords (all must match, case-insensitive)', () => {
@@ -70,28 +71,21 @@ describe('matchesFilters', () => {
     expect(matchesFilters(makeListing({ title: 'MacBook Pro - excellent' }), { ...defaultFilters, excludeKeywords: ['faulty'] })).toBe(true);
   });
 
-  it('passes for both shipping and pickup when allowsPickups=1 (allows pickups)', () => {
-    const listing = makeListing({ allowsPickups: 1 });
+  it('passes for both shipping and pickup when fulfillment has both', () => {
+    const listing = makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: true } });
     expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: true,  pickupAvailable: false })).toBe(true);
     expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: true  })).toBe(true);
     expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: false })).toBe(false);
   });
 
-  it('filters by pickup — pickup only (allowsPickups=2)', () => {
-    const listing = makeListing({ allowsPickups: 2 });
+  it('filters by pickup — pickup only fulfillment', () => {
+    const listing = makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: false } });
     expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: true  })).toBe(true);
     expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: true,  pickupAvailable: false })).toBe(false);
   });
 
-  it('passes both options for allowsPickups=3 under either filter', () => {
-    const listing = makeListing({ allowsPickups: 3 });
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: true,  pickupAvailable: false })).toBe(true);
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: true  })).toBe(true);
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: true,  pickupAvailable: true  })).toBe(true);
-  });
-
-  it('passes listings with no allowsPickups regardless of shipping filter', () => {
-    const listing = makeListing({ allowsPickups: undefined });
+  it('passes listings with no fulfillment regardless of shipping filter', () => {
+    const listing = makeListing({ fulfillment: undefined });
     expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: false })).toBe(true);
   });
 });
@@ -109,9 +103,9 @@ describe('applyFiltersToDOM', () => {
 
   it('count badge and visible cards match after price filter', () => {
     const listings = [
-      makeListing({ price: '$500' }),
-      makeListing({ price: '$1,500' }),
-      makeListing({ price: '$2,500' }),
+      makeListing({ price: 500,   priceDisplay: '$500' }),
+      makeListing({ price: 1500,  priceDisplay: '$1,500' }),
+      makeListing({ price: 2500,  priceDisplay: '$2,500' }),
     ];
     const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, { ...defaultFilters, minPrice: 1000, maxPrice: 2000 });
     expect(visibleCount).toBe(1);
@@ -145,20 +139,20 @@ describe('applyFiltersToDOM', () => {
 
   it('count badge and visible cards match after shipping filter', () => {
     const listings = [
-      makeListing({ allowsPickups: 1 }), // shipping only
-      makeListing({ allowsPickups: 2 }), // pickup only
-      makeListing({ allowsPickups: 3 }), // both
+      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: true  } }), // shipping + pickup
+      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: false } }), // pickup only
+      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: true  } }), // both
     ];
     const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, { ...defaultFilters, shippingAvailable: true, pickupAvailable: false });
-    expect(visibleCount).toBe(2); // allowsPickups 1 and 3
+    expect(visibleCount).toBe(2); // shipping+pickup listings
     expect(badgeCount).toBe(2);
     expect(domVisible).toBe(2);
   });
 
   it('shows zero when no listings match', () => {
     const listings = [
-      makeListing({ price: '$500' }),
-      makeListing({ price: '$600' }),
+      makeListing({ price: 500, priceDisplay: '$500' }),
+      makeListing({ price: 600, priceDisplay: '$600' }),
     ];
     const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, { ...defaultFilters, minPrice: 1000 });
     expect(visibleCount).toBe(0);
@@ -168,9 +162,9 @@ describe('applyFiltersToDOM', () => {
 
   it('shows all when filters are cleared (both shipping options checked)', () => {
     const listings = [
-      makeListing({ allowsPickups: 1 }),
-      makeListing({ allowsPickups: 2 }),
-      makeListing({ allowsPickups: 3 }),
+      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: true  } }),
+      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: false } }),
+      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: true  } }),
     ];
     const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, defaultFilters);
     expect(visibleCount).toBe(3);

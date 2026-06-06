@@ -45,7 +45,6 @@ interface UrlCardState {
 }
 
 let currentSearchName: string | null = null;
-let allListings: ListingItem[] = [];
 let showFilteredListings = false;
 let isDeepSearchRunning = false;
 let deepSearchId: string | null = null;
@@ -64,10 +63,12 @@ function esc(s: string | number): string {
 }
 
 function el<T extends HTMLElement>(id: string): T {
-  return document.getElementById(id) as T;
+  const elem = document.getElementById(id);
+  if (!elem) throw new Error(`Element #${id} not found`);
+  return elem as T;
 }
 
-function getFilters(): FrontendFilters {
+function getFilters(overrides?: Partial<FrontendFilters>): FrontendFilters {
   const minP = el<HTMLInputElement>('minPrice').value;
   const maxP = el<HTMLInputElement>('maxPrice').value;
   const kw   = el<HTMLInputElement>('keywords').value.trim();
@@ -79,6 +80,7 @@ function getFilters(): FrontendFilters {
     excludeKeywords: ex ? ex.split(',').map(s => s.trim()).filter(Boolean) : undefined,
     shippingAvailable: el<HTMLInputElement>('filterShipping').checked,
     pickupAvailable:   el<HTMLInputElement>('filterPickup').checked,
+    ...overrides,
   };
 }
 
@@ -173,7 +175,7 @@ function updateCardSearchBtn(state: UrlCardState): void {
 function setDeepSearchBusy(busy: boolean): void {
   isDeepSearchRunning = busy;
   for (const state of urlCardStates) updateCardSearchBtn(state);
-  updateDeepBtn();
+  renderDerived();
 }
 
 const SEARCH_ICON = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>`;
@@ -217,7 +219,6 @@ function createUrlCard(): UrlCardState {
 }
 
 function resetAllResults(): void {
-  allListings = [];
   listingsByUrl.clear();
   el('listingsContainer').innerHTML = '';
   el('resultCount').textContent = '0';
@@ -241,21 +242,31 @@ function resetAllResults(): void {
     s.input.readOnly = false;
     updateCardSearchBtn(s);
   }
-  updateDeepBtn();
-  updateAiFilterBtn();
+  renderDerived();
 }
 
-function rebuildListings(): void {
+function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
-  allListings = [];
-  for (const state of urlCardStates) {
-    for (const url of state.listingUrls) {
-      if (!seen.has(url) && listingsByUrl.has(url)) {
-        seen.add(url);
-        allListings.push(listingsByUrl.get(url)!);
-      }
-    }
-  }
+  return urlCardStates
+    .flatMap(s => s.listingUrls.filter(u => !seen.has(u) && seen.add(u)))
+    .map(u => listingsByUrl.get(u)!)
+    .filter(Boolean);
+}
+
+function renderDerived(): void {
+  const listings = getOrderedListings();
+  const visible = listings.filter(i => i.filterReason === null && i.aiFilterReason === null);
+  const filtered = listings.length - visible.length;
+  el('resultCount').textContent = String(visible.length);
+  el('filteredCountNum').textContent = String(filtered);
+  el('filteredCount').classList.toggle('hidden', filtered === 0);
+  const isSearching = urlCardStates.some(s => s.searching);
+  const hasUnscraped = visible.some(i => !i.deepSearched);
+  el<HTMLButtonElement>('deepBtn').disabled = isDeepSearchRunning || isSearching || !hasUnscraped;
+  const prompt = el<HTMLTextAreaElement>('aiFilter').value.trim();
+  const hash = promptHash(prompt);
+  el<HTMLButtonElement>('applyAiFilterBtn').disabled =
+    !prompt || listings.length === 0 || listings.every(i => i.aiCheckedHash === hash);
 }
 
 function updateRemoveButtons(): void {
@@ -281,9 +292,8 @@ function resetCardForResearch(state: UrlCardState): void {
   state.cacheStatusEl.innerHTML = '';
   state.statusEl.classList.add('hidden');
   state.input.readOnly = false;
-  rebuildListings();
-  if (allListings.length === 0) el('resultsSection').classList.add('hidden');
-  updateDeepBtn();
+  if (getOrderedListings().length === 0) el('resultsSection').classList.add('hidden');
+  renderDerived();
 }
 
 function removeUrlCard(state: UrlCardState): void {
@@ -295,9 +305,9 @@ function removeUrlCard(state: UrlCardState): void {
     }
   }
   state.el.remove();
-  urlCardStates.splice(urlCardStates.indexOf(state), 1);
-  rebuildListings();
-  if (allListings.length === 0) el('resultsSection').classList.add('hidden');
+  const idx = urlCardStates.indexOf(state);
+  if (idx !== -1) urlCardStates.splice(idx, 1);
+  if (getOrderedListings().length === 0) el('resultsSection').classList.add('hidden');
   updateRemoveButtons();
   applyClientFilters();
 }
@@ -313,7 +323,7 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   state.searchId = crypto.randomUUID();
   state.cancellationRequested = false;
   updateCardSearchBtn(state);
-  updateDeepBtn();
+  renderDerived();
   setSearchingStatus(state, 'Fetching listings…');
 
   let totalFound = 0;
@@ -338,9 +348,8 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
         if (!listingsByUrl.has(listing.url)) {
           const item: ListingItem = { data: listing, deepSearched: false, filterReason: null, aiCheckedHash: null, aiFilterReason: null };
           listingsByUrl.set(listing.url, item);
-          allListings.push(item);
           renderCard(listing);
-          el('resultCount').textContent = String(allListings.length);
+          renderDerived();
         }
       } else if (ev.type === 'error') {
         searchError = true;
@@ -360,8 +369,7 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   if (wasCancelled) {
     setCardStatus(state, `Cancelled — ${totalFound} listing${totalFound !== 1 ? 's' : ''} loaded`, 'error');
     updateCardSearchBtn(state);
-    updateDeepBtn();
-    if (allListings.length > 0) applyClientFilters();
+    if (listingsByUrl.size > 0) applyClientFilters();
     return;
   }
 
@@ -381,10 +389,10 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   if (!searchError) {
     setCardStatus(state, `${totalFound} listing${totalFound !== 1 ? 's' : ''} found`, 'success');
   }
-  updateDeepBtn();
-
-  if (allListings.length > 0) {
+  if (listingsByUrl.size > 0) {
     applyClientFilters();
+  } else {
+    renderDerived();
   }
 }
 
@@ -400,9 +408,7 @@ function filterBannerText(item: ListingItem): string {
 
 function applyClientFilters(): void {
   const filters = getFilters();
-  let visible = 0;
-  let filtered = 0;
-  for (const item of allListings) {
+  for (const item of getOrderedListings()) {
     item.filterReason = computeFilterReason(item.data, filters);
     const passes = item.filterReason === null && item.aiFilterReason === null;
     const card = document.getElementById(cardId(item.data.url));
@@ -413,9 +419,7 @@ function applyClientFilters(): void {
         card.classList.remove('filtered-out');
         banner.textContent = '';
         banner.classList.add('hidden');
-        visible++;
       } else {
-        filtered++;
         card.classList.add('filtered-out');
         banner.textContent = filterBannerText(item);
         banner.classList.remove('hidden');
@@ -423,31 +427,7 @@ function applyClientFilters(): void {
       }
     }
   }
-  el('resultCount').textContent = String(visible);
-  const filteredCountEl = el('filteredCount');
-  if (filtered > 0) {
-    el('filteredCountNum').textContent = String(filtered);
-    filteredCountEl.classList.remove('hidden');
-  } else {
-    filteredCountEl.classList.add('hidden');
-  }
-  updateDeepBtn();
-  updateAiFilterBtn();
-}
-
-function updateDeepBtn(): void {
-  const btn = el<HTMLButtonElement>('deepBtn');
-  const hasUnscraped = allListings.some(item => !item.deepSearched && item.filterReason === null && item.aiFilterReason === null);
-  btn.disabled = isDeepSearchRunning || urlCardStates.some(s => s.searching) || !hasUnscraped;
-
-}
-
-function updateAiFilterBtn(): void {
-  const prompt = el<HTMLTextAreaElement>('aiFilter').value.trim();
-  const btn = el<HTMLButtonElement>('applyAiFilterBtn');
-  if (!prompt || allListings.length === 0) { btn.disabled = true; return; }
-  const hash = promptHash(prompt);
-  btn.disabled = allListings.every(item => item.aiCheckedHash === hash);
+  renderDerived();
 }
 
 function updateDiscoveryBtn(): void {
@@ -463,7 +443,7 @@ async function runAiFilter(): Promise<void> {
   const prompt = el<HTMLTextAreaElement>('aiFilter').value.trim();
   if (!prompt) return;
   const hash = promptHash(prompt);
-  const toCheck = allListings.filter(item => item.aiCheckedHash !== hash && item.filterReason === null);
+  const toCheck = getOrderedListings().filter(item => item.aiCheckedHash !== hash && item.filterReason === null);
   if (toCheck.length === 0) return;
 
   const btn = el<HTMLButtonElement>('applyAiFilterBtn');
@@ -479,7 +459,7 @@ async function runAiFilter(): Promise<void> {
       listings: toCheck.map(item => ({
         url: item.data.url,
         title: item.data.title,
-        price: item.data.price,
+        price: item.data.priceDisplay,
         location: item.data.location,
         description: item.data.description?.slice(0, 300) ?? '',
       })),
@@ -504,7 +484,7 @@ async function runAiFilter(): Promise<void> {
     setStatus((err as Error).message, 'error');
   } finally {
     btn.textContent = 'Apply AI Filter';
-    updateAiFilterBtn();
+    renderDerived();
   }
 }
 
@@ -557,10 +537,10 @@ function cardId(url: string): string {
   return 'card-' + (numId ?? url.replace(/[^a-zA-Z0-9]/g, '').slice(-20));
 }
 
-function shippingBadge(allowsPickups: number | undefined): string {
-  if (allowsPickups === 1) return '<span class="badge badge-both">Allows pickups</span>';
-  if (allowsPickups === 2) return '<span class="badge badge-pickuponly">Pickup only</span>';
-  if (allowsPickups === 3) return '<span class="badge badge-both">Allows pickups</span>';
+function shippingBadge(fulfillment: Listing['fulfillment']): string {
+  if (!fulfillment) return '';
+  if (fulfillment.pickupAvailable && fulfillment.shippingAvailable) return '<span class="badge badge-both">Allows pickups</span>';
+  if (fulfillment.pickupAvailable) return '<span class="badge badge-pickuponly">Pickup only</span>';
   return '';
 }
 
@@ -603,11 +583,11 @@ function renderCard(listing: Listing): void {
           <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
         </div>
         <div class="listing-prices">
-          <span class="price">${listing.price}</span>
+          <span class="price">${esc(listing.priceDisplay)}</span>
         </div>
         <div class="listing-meta">
           <span class="meta-text">📍 ${esc(listing.location)}</span>
-          ${shippingBadge(listing.allowsPickups)}
+          ${shippingBadge(listing.fulfillment)}
         </div>
         <div class="listing-extras"></div>
       </div>
@@ -721,7 +701,7 @@ function toggleDesc(btn: HTMLButtonElement): void {
 // ── Deep Search ───────────────────────────────────────────────────────────────
 
 async function runDeepSearch(): Promise<void> {
-  const toScrape = allListings
+  const toScrape = getOrderedListings()
     .filter(item => !item.deepSearched && item.filterReason === null && item.aiFilterReason === null)
     .map(item => item.data);
 
@@ -752,7 +732,7 @@ async function runDeepSearch(): Promise<void> {
       } else if (ev.type === 'detail') {
         detailsReceived++;
         const detail = ev.detail as ListingDetail;
-        const item = allListings.find(i => i.data.url === ev.url);
+        const item = listingsByUrl.get(ev.url as string);
         if (item) {
           item.deepSearched = true;
           item.data.description = detail.description;
@@ -770,13 +750,11 @@ async function runDeepSearch(): Promise<void> {
             banner.textContent = filterBannerText(item);
             banner.classList.remove('hidden');
             if (!showFilteredListings) card!.style.display = 'none';
-            const current = parseInt(el('resultCount').textContent ?? '0', 10);
-            el('resultCount').textContent = String(Math.max(0, current - 1));
             hiddenByDescription++;
           }
         }
 
-        updateDeepBtn();
+        renderDerived();
       } else if (ev.type === 'complete') {
         const msg = hiddenByDescription > 0
           ? `Deep search complete — ${hiddenByDescription} listing${hiddenByDescription !== 1 ? 's' : ''} hidden by description filter`
@@ -793,7 +771,7 @@ async function runDeepSearch(): Promise<void> {
 
   // Clear skeleton loaders from listings that never received details
   for (const listing of toScrape) {
-    const item = allListings.find(i => i.data.url === listing.url);
+    const item = listingsByUrl.get(listing.url);
     if (item && !item.deepSearched) {
       const card = document.getElementById(cardId(listing.url));
       if (card) card.querySelector('.listing-extras')!.innerHTML = '';
@@ -880,7 +858,6 @@ function loadDiscoveryResults(data: { urls: string[]; filters: FrontendFilters; 
   setSearchName(data.name);
   markDirty();
   el<HTMLTextAreaElement>('aiFilter').value = aiPrompt;
-  updateAiFilterBtn();
   applyClientFilters();
 }
 
@@ -920,7 +897,7 @@ el<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearch()
 el('toggleFilteredBtn').addEventListener('click', () => {
   showFilteredListings = !showFilteredListings;
   el<HTMLButtonElement>('toggleFilteredBtn').textContent = showFilteredListings ? 'hide' : 'show';
-  for (const item of allListings) {
+  for (const item of getOrderedListings()) {
     if (item.filterReason !== null || item.aiFilterReason !== null) {
       const card = document.getElementById(cardId(item.data.url));
       if (card) card.style.display = showFilteredListings ? '' : 'none';
@@ -983,7 +960,7 @@ el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
   }
 });
 
-el<HTMLTextAreaElement>('aiFilter').addEventListener('input', updateAiFilterBtn);
+el<HTMLTextAreaElement>('aiFilter').addEventListener('input', renderDerived);
 el<HTMLTextAreaElement>('aiFilter').addEventListener('input', markDirty);
 el<HTMLButtonElement>('applyAiFilterBtn').addEventListener('click', () => runAiFilter());
 

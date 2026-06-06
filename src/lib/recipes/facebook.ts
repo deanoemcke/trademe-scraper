@@ -95,9 +95,11 @@ function processRawListing(
   const priceRe = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
   const innerLines = raw.innerText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const priceLines = innerLines.filter(l => priceRe.test(l));
-  const price = priceLines.length === 0 ? 'Price on request'
-              : priceLines.length >= 2  ? `${priceLines[0]} <s>${priceLines[1]}</s>`
-              : priceLines[0];
+  const priceDisplay = priceLines.length === 0 ? 'Price on request'
+                     : priceLines.length >= 2  ? `${priceLines[0]} <s>${priceLines[1]}</s>`
+                     : priceLines[0];
+  const priceMatch = priceLines[0]?.replace(/,/g, '').match(/[\d.]+/);
+  const price = priceMatch ? parseFloat(priceMatch[0]) : null;
 
   let title = '', location = 'Unknown';
   const ariaLabel = raw.ariaLabel.replace(/,\s*listing\s+\d+\s*$/i, '').trim();
@@ -113,7 +115,7 @@ function processRawListing(
   if (!title) return;
 
   counter.total++;
-  onEvent({ type: 'listing', data: { title, price, location, url: raw.url, thumbnailUrl: raw.thumbnailUrl || undefined, isAuction: false } });
+  onEvent({ type: 'listing', data: { title, price, priceDisplay, location, url: raw.url, thumbnailUrl: raw.thumbnailUrl || undefined, isAuction: false } });
 }
 
 // ── Quick search ──────────────────────────────────────────────────────────────

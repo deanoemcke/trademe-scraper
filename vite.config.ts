@@ -22,10 +22,16 @@ const DB_PATH = path.resolve(__dirname, '.cache/cache.db');
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 db.exec(`
+  CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER NOT NULL
+  );
+  INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
   CREATE TABLE IF NOT EXISTS quick_searches (
     url TEXT PRIMARY KEY,
     data TEXT NOT NULL,
-    cached_at INTEGER NOT NULL
+    cached_at INTEGER NOT NULL,
+    listing_count INTEGER,
+    is_complete INTEGER NOT NULL DEFAULT 1
   );
   CREATE TABLE IF NOT EXISTS deep_details (
     url TEXT PRIMARY KEY,
@@ -49,6 +55,10 @@ db.exec(`
   );
 `);
 
+// Migrate existing databases that predate the new quick_searches columns
+try { db.exec('ALTER TABLE quick_searches ADD COLUMN listing_count INTEGER'); } catch { /* already exists */ }
+try { db.exec('ALTER TABLE quick_searches ADD COLUMN is_complete INTEGER NOT NULL DEFAULT 1'); } catch { /* already exists */ }
+
 {
   const catCount = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories').get()!).n;
   if (catCount === 0) console.warn('[categories] trademe_categories table is empty — run: npx ts-node scripts/import-categories.ts');
@@ -57,7 +67,7 @@ db.exec(`
 
 const stmts = {
   getSearch:    db.prepare<[string], { data: string; cached_at: number }>('SELECT data, cached_at FROM quick_searches WHERE url = ?'),
-  setSearch:    db.prepare('INSERT OR REPLACE INTO quick_searches (url, data, cached_at) VALUES (?, ?, ?)'),
+  setSearch:    db.prepare('INSERT OR REPLACE INTO quick_searches (url, data, cached_at, listing_count, is_complete) VALUES (?, ?, ?, ?, ?)'),
   clearSearch:  db.prepare('DELETE FROM quick_searches'),
   getDetail:    db.prepare<[string], { data: string; cached_at: number }>('SELECT data, cached_at FROM deep_details WHERE url = ?'),
   setDetail:    db.prepare('INSERT OR REPLACE INTO deep_details (url, data, cached_at) VALUES (?, ?, ?)'),
@@ -89,10 +99,17 @@ function cacheAge(cachedAt: number): string {
 
 // ── SSE / body helpers ────────────────────────────────────────────────────────
 
+const MAX_BODY_BYTES = 1 * 1024 * 1024;
+
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    let totalBytes = 0;
+    req.on('data', (chunk: Buffer) => {
+      totalBytes += chunk.length;
+      if (totalBytes > MAX_BODY_BYTES) { req.destroy(); reject(new Error('Request body too large')); return; }
+      chunks.push(chunk);
+    });
     req.on('end', () => {
       try { resolve(JSON.parse(Buffer.concat(chunks).toString())); }
       catch { reject(new Error('Invalid JSON')); }
@@ -257,6 +274,7 @@ export default defineConfig({
           startSSE(res);
           if (searchId) req.on('close', () => cancelledSearches.add(searchId));
           const isCancelled = () => searchId ? cancelledSearches.has(searchId) : false;
+          const heartbeat = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch { /* ignore */ } }, 15000);
           const listings: Listing[] = [];
           try {
             await recipe.quickSearch(url, (event) => {
@@ -264,12 +282,13 @@ export default defineConfig({
               try { sse(res, event); } catch { /* client disconnected */ }
             }, isCancelled);
             if (!isCancelled() && listings.length > 0) {
-              stmts.setSearch.run(url, JSON.stringify(listings), Date.now());
+              stmts.setSearch.run(url, JSON.stringify(listings), Date.now(), listings.length, 1);
               console.log(`[cache] stored ${listings.length} listings`);
             }
           } catch (err) {
             if (!isCancelled()) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
           } finally {
+            clearInterval(heartbeat);
             if (searchId) cancelledSearches.delete(searchId);
             try { res.end(); } catch { /* client already disconnected */ }
           }
@@ -284,18 +303,33 @@ export default defineConfig({
             sendJSON(res, 400, { error: 'listings array is required' }); return;
           }
 
-          const recipe = listings[0]?.url ? getRecipeForUrl(listings[0].url) : null;
-          if (!recipe) { sendJSON(res, 400, { error: 'No recipe found for these listings' }); return; }
+          // Group by recipe so mixed TradeMe+Facebook sets both get scraped
+          const byRecipe = new Map<string, Listing[]>();
+          for (const listing of listings) {
+            const r = listing.url ? getRecipeForUrl(listing.url) : null;
+            if (!r) continue;
+            const group = byRecipe.get(r.name) ?? [];
+            group.push(listing);
+            byRecipe.set(r.name, group);
+          }
+          if (byRecipe.size === 0) { sendJSON(res, 400, { error: 'No recipe found for these listings' }); return; }
 
           const fromCache: { url: string; detail: ListingDetail }[] = [];
-          const toScrape: Listing[] = [];
+          const toScrapeByRecipe = new Map<string, Listing[]>();
           for (const listing of listings) {
+            const r = listing.url ? getRecipeForUrl(listing.url) : null;
+            if (!r) continue;
             const row = stmts.getDetail.get(listing.url);
             if (row && isFresh(row.cached_at)) fromCache.push({ url: listing.url, detail: JSON.parse(row.data) as ListingDetail });
-            else toScrape.push(listing);
+            else {
+              const group = toScrapeByRecipe.get(r.name) ?? [];
+              group.push(listing);
+              toScrapeByRecipe.set(r.name, group);
+            }
           }
 
-          if (toScrape.length === 0) {
+          const totalToScrape = [...toScrapeByRecipe.values()].reduce((n, g) => n + g.length, 0);
+          if (totalToScrape === 0) {
             console.log(`[cache] detail hit for all ${listings.length} listings`);
             startSSE(res);
             for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
@@ -308,20 +342,28 @@ export default defineConfig({
           startSSE(res);
           if (deepSearchId) req.on('close', () => cancelledSearches.add(deepSearchId));
           const isDeepCancelled = () => deepSearchId ? cancelledSearches.has(deepSearchId) : false;
+          const deepHeartbeat = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch { /* ignore */ } }, 15000);
           for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
 
           try {
-            await recipe.deepSearch(toScrape, (event) => {
-              if (event.type === 'complete' && isDeepCancelled()) return;
-              if (event.type === 'detail') {
-                stmts.setDetail.run(event.url, JSON.stringify(event.detail), Date.now());
-                console.log(`[cache] stored detail for ${event.url}`);
-              }
-              try { sse(res, event); } catch { /* client disconnected */ }
-            }, isDeepCancelled);
+            await Promise.all(
+              [...toScrapeByRecipe.entries()].map(([recipeName, recipeListings]) => {
+                const recipe = getRecipeForUrl(recipeListings[0].url)!;
+                return recipe.deepSearch(recipeListings, (event) => {
+                  if (event.type === 'complete' && isDeepCancelled()) return;
+                  if (event.type === 'detail') {
+                    stmts.setDetail.run(event.url, JSON.stringify(event.detail), Date.now());
+                    console.log(`[cache][${recipeName}] stored detail for ${event.url}`);
+                  }
+                  try { sse(res, event); } catch { /* client disconnected */ }
+                }, isDeepCancelled);
+              })
+            );
+            if (!isDeepCancelled()) try { sse(res, { type: 'complete' }); } catch { /* ignore */ }
           } catch (err) {
             if (!isDeepCancelled()) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
           } finally {
+            clearInterval(deepHeartbeat);
             if (deepSearchId) cancelledSearches.delete(deepSearchId);
             try { res.end(); } catch { /* client already disconnected */ }
           }
@@ -351,7 +393,7 @@ export default defineConfig({
         if (req.url === '/api/ai-filter') {
           const body = await readBody(req).catch(() => null);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const listings = (body as any)?.listings as Array<{ url: string; title: string; price: string; location: string; description: string }> | undefined;
+          const listings = (body as any)?.listings as Array<{ url: string; title: string; price: string; location: string; description: string }> | undefined; // price is priceDisplay string
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const prompt = (body as any)?.prompt as string | undefined;
 
@@ -380,7 +422,8 @@ export default defineConfig({
             ).join('\n');
             try {
               const result = await aiJSON(aiCfg, 'ai-filter', systemMsg, `Criteria: ${prompt}\n\nListings:\n${numbered}`, 4096);
-              const parsed: Array<{ index: number; pass: boolean; reason: string | null }> = Array.isArray(result) ? result : (result.results ?? []);
+              if (typeof result !== 'object' || result === null) throw new Error('AI filter: expected object response');
+              const parsed: Array<{ index: number; pass: boolean; reason: string | null }> = Array.isArray(result) ? result : (Array.isArray(result.results) ? result.results : []);
               const results = parsed
                 .map(r => ({ url: batch[r.index - 1]?.url ?? '', pass: r.pass, reason: r.reason ?? null }))
                 .filter(r => r.url);
@@ -422,7 +465,8 @@ export default defineConfig({
               `I'm looking for: ${discPrompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
               4096
             );
-            const rawCategories = (step1.categories ?? []) as string[];
+            if (typeof step1 !== 'object' || step1 === null) throw new Error('discover step1: expected object response');
+            const rawCategories = (Array.isArray(step1.categories) ? step1.categories : []) as string[];
             const chosenTop2: string[] = rawCategories
               .map((display: string) => broad.find(c => c.display === display)?.slug)
               .filter((s): s is string => !!s);
@@ -451,7 +495,7 @@ export default defineConfig({
             const allEntries: { slug: string; searchString: string | null }[] = [];
             for (const { t2, candidates, result } of step2Results) {
               const validSlugs = new Set(candidates.map(c => c.slug));
-              if (!result.categories) console.warn(`[discover] step2:${t2} unexpected result: ${JSON.stringify(result)}`);
+              if (typeof result !== 'object' || result === null || !Array.isArray(result.categories)) console.warn(`[discover] step2:${t2} unexpected result: ${JSON.stringify(result)}`);
               console.log(`[discover] step2:${t2} raw=${JSON.stringify(result.categories)}`);
               for (const c of ((result.categories ?? []) as Step2Category[]).filter(c => validSlugs.has(c.slug))) {
                 allEntries.push({ slug: c.slug, searchString: c.searchString ?? null });
@@ -499,7 +543,7 @@ export default defineConfig({
             if (urls.length === 0) { sendJSON(res, 500, { error: 'AI returned no valid specific categories' }); return; }
 
             // Append a Facebook Marketplace URL
-            const fbSearchTerm = ((step1.name as string | undefined)?.trim()) || discPrompt.trim();
+            const fbSearchTerm = String(step1.name ?? '').trim() || discPrompt.trim();
             const fbParams = new URLSearchParams();
             fbParams.set('query', fbSearchTerm);
             if (discMaxPrice) fbParams.set('maxPrice', String(discMaxPrice));
@@ -520,8 +564,9 @@ export default defineConfig({
               shippingAvailable: !pickupOnly,
               pickupAvailable: true,
             };
-            console.log(`[discover] "${discPrompt}" → step1: ${chosenTop2.join(', ')} → ${urls.length} URL(s) (incl. Facebook), name="${step1.name}"`);
-            sendJSON(res, 200, { urls, filters, name: step1.name ?? discPrompt.trim() });
+            const discName = String(step1.name ?? '').trim() || discPrompt.trim();
+            console.log(`[discover] "${discPrompt}" → step1: ${chosenTop2.join(', ')} → ${urls.length} URL(s) (incl. Facebook), name="${discName}"`);
+            sendJSON(res, 200, { urls, filters, name: discName });
           } catch (err) {
             sendJSON(res, 500, { error: (err as Error).message });
           }

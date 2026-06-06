@@ -57,7 +57,8 @@ vi.mock('../queue', () => ({
 function makeListing(overrides: Partial<Listing> = {}): Listing {
   return {
     title: 'MacBook Pro 14" 2021 M1 Pro 16GB',
-    price: '$1,500',
+    price: 1500,
+    priceDisplay: '$1,500',
     location: 'Auckland City, Auckland',
     url: 'https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/12345',
     ...overrides,
@@ -84,11 +85,12 @@ describe('parseSearchApiResponse', () => {
     const { listings } = parseSearchApiResponse({ List: [baseItem], TotalCount: 1, PageSize: 56 });
     expect(listings).toHaveLength(1);
     expect(listings[0].title).toBe('MacBook Pro 14"');
-    expect(listings[0].price).toBe('$1,500');
+    expect(listings[0].price).toBe(1500);
+    expect(listings[0].priceDisplay).toBe('$1,500');
     expect(listings[0].location).toBe('Auckland City, Auckland');
     expect(listings[0].url).toBe('https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999');
     expect(listings[0].thumbnailUrl).toBe('https://trademe.tmcdn.co.nz/photoserver/full/123.jpg');
-    expect(listings[0].allowsPickups).toBe(3);
+    expect(listings[0].fulfillment).toEqual({ pickupAvailable: true, shippingAvailable: true });
   });
 
   it('reads TotalCount and PageSize', () => {

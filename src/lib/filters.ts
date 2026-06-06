@@ -11,11 +11,6 @@ export interface FrontendFilters {
 
 export type FilterReason = 'keyword' | 'price' | 'shipping';
 
-export function priceToNumber(raw: string): number | null {
-  const match = String(raw).replace(/,/g, '').match(/[\d.]+/);
-  return match ? parseFloat(match[0]) : null;
-}
-
 export function computeFilterReason(listing: Listing, filters: FrontendFilters): FilterReason | null {
   const t = listing.title.toLowerCase();
 
@@ -27,17 +22,15 @@ export function computeFilterReason(listing: Listing, filters: FrontendFilters):
     if (filters.excludeKeywords.some(kw => t.includes(kw.toLowerCase()) || d.includes(kw.toLowerCase()))) return 'keyword';
   }
 
-  const price = priceToNumber(listing.price);
-  if (price !== null) {
-    if (filters.minPrice !== undefined && price < filters.minPrice) return 'price';
-    if (filters.maxPrice !== undefined && price > filters.maxPrice) return 'price';
+  if (listing.price !== null) {
+    if (filters.minPrice !== undefined && listing.price < filters.minPrice) return 'price';
+    if (filters.maxPrice !== undefined && listing.price > filters.maxPrice) return 'price';
   }
 
-  if (listing.allowsPickups !== undefined) {
-    const hasPickup   = listing.allowsPickups === 1 || listing.allowsPickups === 2 || listing.allowsPickups === 3;
-    const hasShipping = listing.allowsPickups === 1 || listing.allowsPickups === 3;
-    const matches = (filters.shippingAvailable && hasShipping) ||
-                    (filters.pickupAvailable   && hasPickup);
+  if (listing.fulfillment !== undefined) {
+    const { pickupAvailable, shippingAvailable } = listing.fulfillment;
+    const matches = (filters.shippingAvailable && shippingAvailable) ||
+                    (filters.pickupAvailable   && pickupAvailable);
     if (!matches) return 'shipping';
   }
 

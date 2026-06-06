@@ -7,7 +7,14 @@ export class ConcurrencyQueue {
   add<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       this.queue.push(() => {
-        fn().then(resolve, reject).finally(() => {
+        let p: Promise<T>;
+        try { p = fn(); } catch (err) {
+          this.active--;
+          this.drain();
+          reject(err);
+          return;
+        }
+        p.then(resolve, reject).finally(() => {
           this.active--;
           this.drain();
         });

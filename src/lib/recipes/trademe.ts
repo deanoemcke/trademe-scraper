@@ -80,6 +80,20 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
   }
 }
 
+// ── Price + fulfillment helpers ───────────────────────────────────────────────
+
+function parsePriceValue(display: string): number | null {
+  const match = String(display).replace(/,/g, '').match(/[\d.]+/);
+  return match ? parseFloat(match[0]) : null;
+}
+
+function mapFulfillment(allowsPickups?: number): { pickupAvailable: boolean; shippingAvailable: boolean } | undefined {
+  if (allowsPickups === 1) return { pickupAvailable: true, shippingAvailable: true };
+  if (allowsPickups === 2) return { pickupAvailable: true, shippingAvailable: false };
+  if (allowsPickups === 3) return { pickupAvailable: true, shippingAvailable: true };
+  return undefined;
+}
+
 // ── API response parsing ──────────────────────────────────────────────────────
 
 export function parseFrendState(state: Record<string, unknown>): { listings: Listing[]; totalCount: number; pageSize: number } | null {
@@ -90,16 +104,20 @@ export function parseFrendState(state: Record<string, unknown>): { listings: Lis
     const totalCount = (b.totalCount as number) ?? 0;
     const pageSize = (b.pageSize as number) || (items.length || 1);
     const listings = items
-      .map((item) => ({
-        title: (item.title as string) ?? '',
-        price: (item.priceDisplay as string) ?? 'Price on request',
-        location: [(item.suburb as string), (item.region as string)].filter(Boolean).join(', ') || 'Unknown',
-        url: (item.canonicalPath as string) ? `${TRADEME_BASE}${item.canonicalPath}` : '',
-        thumbnailUrl: ((item.pictureHref as string) || undefined)
-          ?.replace('/photoserver/thumb/', '/photoserver/full/'),
-        allowsPickups: (item.allowsPickups as number) || undefined,
-        isAuction: true,
-      }))
+      .map((item) => {
+        const display = (item.priceDisplay as string) || 'Price on request';
+        return {
+          title: (item.title as string) ?? '',
+          price: parsePriceValue(display),
+          priceDisplay: display,
+          location: [(item.suburb as string), (item.region as string)].filter(Boolean).join(', ') || 'Unknown',
+          url: (item.canonicalPath as string) ? `${TRADEME_BASE}${item.canonicalPath}` : '',
+          thumbnailUrl: ((item.pictureHref as string) || undefined)
+            ?.replace('/photoserver/thumb/', '/photoserver/full/'),
+          fulfillment: mapFulfillment((item.allowsPickups as number) || undefined),
+          isAuction: true,
+        };
+      })
       .filter((l) => l.title && l.url);
     if (listings.length > 0) return { listings, totalCount, pageSize };
   }
@@ -111,16 +129,20 @@ export function parseSearchApiResponse(data: Record<string, unknown>): { listing
   const totalCount = (data?.TotalCount as number) ?? 0;
   const pageSize = (data?.PageSize as number) || (items.length || 1);
   const listings = items
-    .map((item) => ({
-      title: (item.Title as string) ?? '',
-      price: (item.PriceDisplay as string) ?? 'Price on request',
-      location: [(item.Suburb as string), (item.Region as string)].filter(Boolean).join(', ') || 'Unknown',
-      url: (item.CanonicalPath as string) ? `${TRADEME_BASE}${item.CanonicalPath}` : '',
-      thumbnailUrl: ((item.PictureHref as string) || undefined)
-        ?.replace('/photoserver/thumb/', '/photoserver/full/'),
-      allowsPickups: (item.AllowsPickups as number) || undefined,
-      isAuction: true,
-    }))
+    .map((item) => {
+      const display = (item.PriceDisplay as string) || 'Price on request';
+      return {
+        title: (item.Title as string) ?? '',
+        price: parsePriceValue(display),
+        priceDisplay: display,
+        location: [(item.Suburb as string), (item.Region as string)].filter(Boolean).join(', ') || 'Unknown',
+        url: (item.CanonicalPath as string) ? `${TRADEME_BASE}${item.CanonicalPath}` : '',
+        thumbnailUrl: ((item.PictureHref as string) || undefined)
+          ?.replace('/photoserver/thumb/', '/photoserver/full/'),
+        fulfillment: mapFulfillment((item.AllowsPickups as number) || undefined),
+        isAuction: true,
+      };
+    })
     .filter((l) => l.title && l.url);
   return { listings, totalCount, pageSize };
 }
