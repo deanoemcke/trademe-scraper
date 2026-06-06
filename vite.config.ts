@@ -157,7 +157,16 @@ async function aiJSON(cfg: { url: string; model: string; apiKey: string }, label
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const d = await r.json() as any;
   const raw: string = d.choices?.[0]?.message?.content ?? '{}';
-  const stripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, '').trim();
+  // Extract JSON from a markdown code fence if the model wrapped it in prose
+  let stripped: string;
+  const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenceMatch) {
+    stripped = fenceMatch[1].trim();
+  } else {
+    // Fallback: grab from first { to last }
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    stripped = jsonMatch ? jsonMatch[0].trim() : raw.trim();
+  }
   try {
     return JSON.parse(stripped);
   } catch {
@@ -375,7 +384,9 @@ export default defineConfig({
           const body = await readBody(req).catch(() => null);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const discPrompt = (body as any)?.prompt as string | undefined;
+          const discMaxPrice = (body as any)?.maxPrice as number | undefined;
           if (!discPrompt?.trim()) { sendJSON(res, 400, { error: 'prompt is required' }); return; }
+          if (!discMaxPrice || discMaxPrice <= 0) { sendJSON(res, 400, { error: 'maxPrice is required' }); return; }
 
           const aiCfg = getAIConfig();
           if (typeof aiCfg === 'string') { sendJSON(res, 500, { error: aiCfg }); return; }
@@ -387,7 +398,7 @@ export default defineConfig({
             const broadDisplayList = broad.map(c => c.display).join('\n');
             const step1 = await aiJSON(
               aiCfg, 'step1',
-              'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also extract any price limits and suggest a short label for the search. Return JSON: { "categories": string[], "maxPrice": number | null, "minPrice": number | null, "name": string } using the exact category names from the list.',
+              'You are a TradeMe NZ shopping assistant. From the category list below, pick the 1–3 categories where this item would most likely be listed for sale. Also suggest a short label for the search. Return JSON: { "categories": string[], "name": string } using the exact category names from the list.',
               `I'm looking for: ${discPrompt.trim()}\n\nAvailable categories:\n${broadDisplayList}`,
               4096
             );
@@ -420,6 +431,7 @@ export default defineConfig({
             const allEntries: { slug: string; searchString: string | null }[] = [];
             for (const { t2, candidates, result } of step2Results) {
               const validSlugs = new Set(candidates.map(c => c.slug));
+              if (!result.categories) console.warn(`[discover] step2:${t2} unexpected result: ${JSON.stringify(result)}`);
               console.log(`[discover] step2:${t2} raw=${JSON.stringify(result.categories)}`);
               for (const c of ((result.categories ?? []) as Step2Category[]).filter(c => validSlugs.has(c.slug))) {
                 allEntries.push({ slug: c.slug, searchString: c.searchString ?? null });
@@ -442,7 +454,7 @@ export default defineConfig({
                 e.slug.split('/').slice(0, -1).join('/') === parentSlug &&
                 e.searchString === entry.searchString
               );
-              if (siblings.length >= 1 && parentSlug) {
+              if (siblings.length >= 1 && parentSlug && parentSlug.split('/').length >= 3) {
                 // 2+ siblings with same searchString — collapse to parent
                 for (const s of siblings) consumed.add(s.slug);
                 consumed.add(entry.slug);
@@ -451,15 +463,22 @@ export default defineConfig({
                 collapsed.push(entry);
               }
             }
+            // Motors, property, jobs etc. have their own URL sections; everything else is under /marketplace/
+            const TRADEME_SECTIONS = new Set(['motors', 'property', 'jobs', 'flatmates-wanted', 'services']);
             const urls = collapsed.map(e => {
-              const base = `https://www.trademe.co.nz/a/${e.slug}/search`;
-              return e.searchString ? `${base}?search_string=${encodeURIComponent(e.searchString)}` : base;
+              const topLevel = e.slug.split('/')[0];
+              const urlSlug = TRADEME_SECTIONS.has(topLevel) ? e.slug : `marketplace/${e.slug}`;
+              const params = new URLSearchParams();
+              if (e.searchString) params.set('search_string', e.searchString);
+              if (discMaxPrice) params.set('price_max', String(discMaxPrice));
+              const qs = params.toString();
+              return `https://www.trademe.co.nz/a/${urlSlug}/search${qs ? `?${qs}` : ''}`;
             });
             if (urls.length === 0) { sendJSON(res, 500, { error: 'AI returned no valid specific categories' }); return; }
 
             const filters = {
-              maxPrice: step1.maxPrice ?? undefined,
-              minPrice: step1.minPrice ?? undefined,
+              maxPrice: discMaxPrice,
+              minPrice: undefined,
               shippingAvailable: true,
               pickupAvailable: true,
             };

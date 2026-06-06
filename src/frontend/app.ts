@@ -451,7 +451,10 @@ function updateAiFilterBtn(): void {
 }
 
 function updateDiscoveryBtn(): void {
-  el<HTMLButtonElement>('discoveryBtn').disabled = !el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
+  const hasPrompt = !!el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
+  const maxPriceRaw = el<HTMLInputElement>('discoveryMaxPrice').value.trim();
+  const hasValidPrice = maxPriceRaw !== '' && isFinite(parseFloat(maxPriceRaw)) && parseFloat(maxPriceRaw) > 0;
+  el<HTMLButtonElement>('discoveryBtn').disabled = !hasPrompt || !hasValidPrice;
 }
 
 async function runAiFilter(): Promise<void> {
@@ -925,9 +928,12 @@ el('toggleFilteredBtn').addEventListener('click', () => {
 
 
 el<HTMLTextAreaElement>('discoveryPrompt').addEventListener('input', updateDiscoveryBtn);
+el<HTMLInputElement>('discoveryMaxPrice').addEventListener('input', updateDiscoveryBtn);
 el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
   const prompt = el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
   if (!prompt) return;
+  const maxPriceVal = el<HTMLInputElement>('discoveryMaxPrice').value.trim();
+  const maxPrice = maxPriceVal ? parseFloat(maxPriceVal) : undefined;
   const btn = el<HTMLButtonElement>('discoveryBtn');
   const errorEl = el<HTMLDivElement>('discoveryError');
   errorEl.style.display = 'none';
@@ -937,7 +943,7 @@ el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
     const res = await fetch('/api/discover', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, maxPrice }),
     });
     const data = await res.json() as { urls?: string[]; filters?: FrontendFilters; name?: string; error?: string };
     if (!res.ok || !data.urls?.length) {

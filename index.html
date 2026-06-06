@@ -334,7 +334,9 @@
   <!-- Discovery prompt -->
   <div id="discoveryCard" class="card" style="margin-bottom:0.875rem">
     <div class="card-label">what shiny new thing are you looking for?</div>
-    <textarea id="discoveryPrompt" rows="3" style="width:100%;resize:vertical;margin-bottom:0.5rem" placeholder="e.g. a MacBook Pro M3, good condition, under $2000"></textarea>
+    <textarea id="discoveryPrompt" rows="3" style="width:100%;resize:vertical;margin-bottom:0.75rem" placeholder="e.g. a MacBook Pro M3, good condition"></textarea>
+    <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem">What's the most you want to pay?</label>
+    <input id="discoveryMaxPrice" type="number" min="0" placeholder="e.g. 2000" style="width:100%;margin-bottom:0.75rem" />
     <div style="display:flex;justify-content:center">
       <button id="discoveryBtn" class="btn btn-primary" disabled>Get it!</button>
     </div>
