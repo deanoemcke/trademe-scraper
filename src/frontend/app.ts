@@ -450,6 +450,10 @@ function updateAiFilterBtn(): void {
   btn.disabled = allListings.every(item => item.aiCheckedHash === hash);
 }
 
+function updateDiscoveryBtn(): void {
+  el<HTMLButtonElement>('discoveryBtn').disabled = !el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
+}
+
 async function runAiFilter(): Promise<void> {
   const prompt = el<HTMLTextAreaElement>('aiFilter').value.trim();
   if (!prompt) return;
@@ -902,6 +906,21 @@ el('toggleFilteredBtn').addEventListener('click', () => {
   }
 });
 
+
+el<HTMLTextAreaElement>('discoveryPrompt').addEventListener('input', updateDiscoveryBtn);
+el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
+  const prompt = el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
+  if (!prompt) return;
+  const btn = el<HTMLButtonElement>('discoveryBtn');
+  btn.disabled = true;
+  btn.textContent = 'Working…';
+  try {
+    // TODO: implement discovery action
+  } finally {
+    btn.textContent = 'Give it to me!';
+    updateDiscoveryBtn();
+  }
+});
 
 el<HTMLTextAreaElement>('aiFilter').addEventListener('input', updateAiFilterBtn);
 el<HTMLTextAreaElement>('aiFilter').addEventListener('input', markDirty);
