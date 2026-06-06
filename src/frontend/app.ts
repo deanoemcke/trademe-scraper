@@ -454,7 +454,9 @@ function updateDiscoveryBtn(): void {
   const hasPrompt = !!el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
   const maxPriceRaw = el<HTMLInputElement>('discoveryMaxPrice').value.trim();
   const hasValidPrice = maxPriceRaw !== '' && isFinite(parseFloat(maxPriceRaw)) && parseFloat(maxPriceRaw) > 0;
-  el<HTMLButtonElement>('discoveryBtn').disabled = !hasPrompt || !hasValidPrice;
+  const isPickupOnly = el<HTMLSelectElement>('discoveryFulfillment').value === 'pickup';
+  const hasRegion = !isPickupOnly || !!el<HTMLSelectElement>('discoveryRegion').value;
+  el<HTMLButtonElement>('discoveryBtn').disabled = !hasPrompt || !hasValidPrice || !hasRegion;
 }
 
 async function runAiFilter(): Promise<void> {
@@ -927,6 +929,24 @@ el('toggleFilteredBtn').addEventListener('click', () => {
 });
 
 
+// Populate region dropdown and wire fulfillment toggle
+fetch('/api/regions').then(r => r.json()).then((regions: Array<{ value: string; display: string }>) => {
+  const select = el<HTMLSelectElement>('discoveryRegion');
+  for (const region of regions) {
+    const opt = document.createElement('option');
+    opt.value = region.value;
+    opt.textContent = region.display;
+    select.appendChild(opt);
+  }
+}).catch(() => { /* regions unavailable — dropdown stays empty */ });
+
+el<HTMLSelectElement>('discoveryFulfillment').addEventListener('change', () => {
+  const isPickup = el<HTMLSelectElement>('discoveryFulfillment').value === 'pickup';
+  el('discoveryRegion').style.display = isPickup ? '' : 'none';
+  updateDiscoveryBtn();
+});
+el<HTMLSelectElement>('discoveryRegion').addEventListener('change', updateDiscoveryBtn);
+
 el<HTMLTextAreaElement>('discoveryPrompt').addEventListener('input', updateDiscoveryBtn);
 el<HTMLInputElement>('discoveryMaxPrice').addEventListener('input', updateDiscoveryBtn);
 el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
@@ -934,6 +954,8 @@ el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
   if (!prompt) return;
   const maxPriceVal = el<HTMLInputElement>('discoveryMaxPrice').value.trim();
   const maxPrice = maxPriceVal ? parseFloat(maxPriceVal) : undefined;
+  const fulfillment = el<HTMLSelectElement>('discoveryFulfillment').value;
+  const regionValue = fulfillment === 'pickup' ? el<HTMLSelectElement>('discoveryRegion').value : undefined;
   const btn = el<HTMLButtonElement>('discoveryBtn');
   const errorEl = el<HTMLDivElement>('discoveryError');
   errorEl.style.display = 'none';
@@ -943,7 +965,7 @@ el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
     const res = await fetch('/api/discover', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, maxPrice }),
+      body: JSON.stringify({ prompt, maxPrice, fulfillment, regionValue }),
     });
     const data = await res.json() as { urls?: string[]; filters?: FrontendFilters; name?: string; error?: string };
     if (!res.ok || !data.urls?.length) {

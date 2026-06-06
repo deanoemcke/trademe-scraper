@@ -1,0 +1,20 @@
+[
+  { "name": "Northland",        "tradeMeRegionId": 1  },
+  { "name": "Auckland",         "tradeMeRegionId": 2  },
+  { "name": "Waikato",          "tradeMeRegionId": 3  },
+  { "name": "Bay of Plenty",    "tradeMeRegionId": 4  },
+  { "name": "Gisborne",         "tradeMeRegionId": 5  },
+  { "name": "Hawke's Bay",      "tradeMeRegionId": 6  },
+  { "name": "Taranaki",         "tradeMeRegionId": 7  },
+  { "name": "Whanganui",        "tradeMeRegionId": 8  },
+  { "name": "Manawatu",         "tradeMeRegionId": 9  },
+  { "name": "Wairarapa",        "tradeMeRegionId": 11 },
+  { "name": "Wellington",       "tradeMeRegionId": 12 },
+  { "name": "Nelson Bays",      "tradeMeRegionId": 13 },
+  { "name": "Marlborough",      "tradeMeRegionId": 14 },
+  { "name": "West Coast",       "tradeMeRegionId": 15 },
+  { "name": "Canterbury",       "tradeMeRegionId": 16 },
+  { "name": "Timaru - Oamaru",  "tradeMeRegionId": 17 },
+  { "name": "Otago",            "tradeMeRegionId": 18 },
+  { "name": "Southland",        "tradeMeRegionId": 19 }
+]

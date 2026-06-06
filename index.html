@@ -337,6 +337,14 @@
     <textarea id="discoveryPrompt" rows="3" style="width:100%;resize:vertical;margin-bottom:0.75rem" placeholder="e.g. a MacBook Pro M3, good condition"></textarea>
     <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem">What's the most you want to pay?</label>
     <input id="discoveryMaxPrice" type="number" min="0" placeholder="e.g. 2000" style="width:100%;margin-bottom:0.75rem" />
+    <label style="display:block;font-size:0.8rem;color:var(--muted);margin-bottom:0.25rem">Fulfillment</label>
+    <select id="discoveryFulfillment" style="width:100%;margin-bottom:0.5rem">
+      <option value="any">Pickup or Shipping</option>
+      <option value="pickup">Pickup only</option>
+    </select>
+    <select id="discoveryRegion" style="width:100%;margin-bottom:0.75rem;display:none">
+      <option value="">Select a region…</option>
+    </select>
     <div style="display:flex;justify-content:center">
       <button id="discoveryBtn" class="btn btn-primary" disabled>Get it!</button>
     </div>

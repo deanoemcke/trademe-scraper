@@ -41,12 +41,20 @@ db.exec(`
     parent_slug TEXT,
     top2        TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS trademe_regions (
+    value   TEXT PRIMARY KEY,
+    display TEXT NOT NULL
+  );
 `);
 
 {
   const catCount = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories').get()!).n;
   if (catCount === 0) console.warn('[categories] trademe_categories table is empty — run: npx ts-node scripts/import-categories.ts');
   else console.log(`[categories] ${catCount} TradeMe categories loaded`);
+
+  const regionCount = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_regions').get()!).n;
+  if (regionCount === 0) console.warn('[regions] trademe_regions table is empty — run: npx ts-node scripts/import-regions.ts');
+  else console.log(`[regions] ${regionCount} TradeMe regions loaded`);
 }
 
 const stmts = {
@@ -64,6 +72,8 @@ const stmts = {
   deleteSavedSearch:  db.prepare('DELETE FROM saved_searches WHERE id = ?'),
   getCategoriesAtDepth2: db.prepare<[], { slug: string; display: string }>('SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug'),
   getCategoriesByTop2:   db.prepare<[string], { slug: string; display: string }>('SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug'),
+  getRegions:            db.prepare<[], { value: string; display: string }>('SELECT value, display FROM trademe_regions ORDER BY display'),
+  getRegionById:         db.prepare<[string], { display: string }>('SELECT display FROM trademe_regions WHERE value = ?'),
 };
 
 {
@@ -209,6 +219,10 @@ export default defineConfig({
           if (!row) { sendJSON(res, 404, { error: 'Not found' }); return; }
           stmts.deleteSavedSearch.run(id);
           sendJSON(res, 200, { ok: true }); return;
+        }
+
+        if (req.url === '/api/regions' && req.method === 'GET') {
+          sendJSON(res, 200, stmts.getRegions.all()); return;
         }
 
         if (req.method !== 'POST') { next(); return; }
@@ -385,6 +399,8 @@ export default defineConfig({
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const discPrompt = (body as any)?.prompt as string | undefined;
           const discMaxPrice = (body as any)?.maxPrice as number | undefined;
+          const discFulfillment = ((body as any)?.fulfillment as string | undefined) ?? 'any';
+          const discRegionValue = (body as any)?.regionValue as string | undefined;
           if (!discPrompt?.trim()) { sendJSON(res, 400, { error: 'prompt is required' }); return; }
           if (!discMaxPrice || discMaxPrice <= 0) { sendJSON(res, 400, { error: 'maxPrice is required' }); return; }
 
@@ -465,12 +481,14 @@ export default defineConfig({
             }
             // Motors, property, jobs etc. have their own URL sections; everything else is under /marketplace/
             const TRADEME_SECTIONS = new Set(['motors', 'property', 'jobs', 'flatmates-wanted', 'services']);
+            const pickupOnly = discFulfillment === 'pickup' && !!discRegionValue;
             const urls = collapsed.map(e => {
               const topLevel = e.slug.split('/')[0];
               const urlSlug = TRADEME_SECTIONS.has(topLevel) ? e.slug : `marketplace/${e.slug}`;
               const params = new URLSearchParams();
               if (e.searchString) params.set('search_string', e.searchString);
               if (discMaxPrice) params.set('price_max', String(discMaxPrice));
+              if (pickupOnly) { params.set('user_region', discRegionValue!); params.set('shipping_method', 'pickup'); }
               const qs = params.toString();
               return `https://www.trademe.co.nz/a/${urlSlug}/search${qs ? `?${qs}` : ''}`;
             });
@@ -479,7 +497,7 @@ export default defineConfig({
             const filters = {
               maxPrice: discMaxPrice,
               minPrice: undefined,
-              shippingAvailable: true,
+              shippingAvailable: !pickupOnly,
               pickupAvailable: true,
             };
             console.log(`[discover] "${discPrompt}" → step1: ${chosenTop2.join(', ')} → ${urls.length} URL(s), name="${step1.name}"`);
