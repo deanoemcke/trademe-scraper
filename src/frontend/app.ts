@@ -862,7 +862,7 @@ async function deleteSavedSearch(id: string): Promise<void> {
   await fetchSavedSearches();
 }
 
-function loadDiscoveryResults(data: { urls: string[]; filters: FrontendFilters; name: string }): void {
+function loadDiscoveryResults(data: { urls: string[]; filters: FrontendFilters; name: string }, aiPrompt: string): void {
   resetAllResults();
   while (urlCardStates.length > 1) removeUrlCard(urlCardStates[urlCardStates.length - 1]);
   urlCardStates[0].input.value = data.urls[0];
@@ -874,6 +874,8 @@ function loadDiscoveryResults(data: { urls: string[]; filters: FrontendFilters; 
   }
   setFilters(data.filters);
   setSearchName(data.name);
+  el<HTMLTextAreaElement>('aiFilter').value = aiPrompt;
+  updateAiFilterBtn();
   applyClientFilters();
 }
 
@@ -943,7 +945,7 @@ el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
       errorEl.style.display = 'block';
       return;
     }
-    loadDiscoveryResults(data as { urls: string[]; filters: FrontendFilters; name: string });
+    loadDiscoveryResults(data as { urls: string[]; filters: FrontendFilters; name: string }, prompt);
   } catch {
     errorEl.textContent = 'Discovery failed';
     errorEl.style.display = 'block';
