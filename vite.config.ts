@@ -26,6 +26,14 @@ db.exec(`
     data TEXT NOT NULL,
     cached_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS saved_searches (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    urls       TEXT NOT NULL,
+    filters    TEXT NOT NULL,
+    ai_filter  TEXT,
+    created_at INTEGER NOT NULL
+  );
 `);
 
 const stmts = {
@@ -37,6 +45,10 @@ const stmts = {
   clearDetails: db.prepare('DELETE FROM deep_details'),
   countSearch:  db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM quick_searches'),
   countDetails: db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM deep_details'),
+  listSavedSearches:  db.prepare<[], { id: string; name: string; urls: string; filters: string; ai_filter: string | null; created_at: number }>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC'),
+  getSavedSearch:     db.prepare<[string], { id: string; name: string; urls: string; filters: string; ai_filter: string | null; created_at: number }>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches WHERE id = ?'),
+  insertSavedSearch:  db.prepare('INSERT INTO saved_searches (id, name, urls, filters, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)'),
+  deleteSavedSearch:  db.prepare('DELETE FROM saved_searches WHERE id = ?'),
 };
 
 {
@@ -95,6 +107,36 @@ export default defineConfig({
     name: 'sifty-api',
     configureServer(server) {
       server.middlewares.use(async (req, res, next) => {
+        const urlPath = req.url?.split('?')[0] ?? '';
+
+        // ── Saved searches (GET + DELETE) ─────────────────────────────────────
+        if (urlPath === '/api/saved-searches' && req.method === 'GET') {
+          const rows = stmts.listSavedSearches.all();
+          const searches = rows.map(r => ({
+            id: r.id, name: r.name,
+            urls: JSON.parse(r.urls) as string[],
+            filters: JSON.parse(r.filters),
+            aiFilter: r.ai_filter,
+            createdAt: r.created_at,
+          }));
+          sendJSON(res, 200, { searches }); return;
+        }
+
+        if (urlPath.startsWith('/api/saved-searches/') && req.method === 'GET') {
+          const id = urlPath.replace('/api/saved-searches/', '');
+          const row = stmts.getSavedSearch.get(id);
+          if (!row) { sendJSON(res, 404, { error: 'Not found' }); return; }
+          sendJSON(res, 200, { search: { id: row.id, name: row.name, urls: JSON.parse(row.urls), filters: JSON.parse(row.filters), aiFilter: row.ai_filter, createdAt: row.created_at } }); return;
+        }
+
+        if (urlPath.startsWith('/api/saved-searches/') && req.method === 'DELETE') {
+          const id = urlPath.replace('/api/saved-searches/', '');
+          const row = stmts.getSavedSearch.get(id);
+          if (!row) { sendJSON(res, 404, { error: 'Not found' }); return; }
+          stmts.deleteSavedSearch.run(id);
+          sendJSON(res, 200, { ok: true }); return;
+        }
+
         if (req.method !== 'POST') { next(); return; }
 
         // ── Cancel search ─────────────────────────────────────────────────────
@@ -289,6 +331,23 @@ export default defineConfig({
 
           console.log(`[ai-filter] checked ${listings.length} listings, ${results.filter(r => !r.pass).length} rejected`);
           sendJSON(res, 200, { results });
+          return;
+        }
+
+        // ── Save search ───────────────────────────────────────────────────────
+        if (req.url === '/api/saved-searches') {
+          const body = await readBody(req).catch(() => null);
+          const { name, urls, filters, aiFilter } = (body ?? {}) as { name?: unknown; urls?: unknown; filters?: unknown; aiFilter?: unknown };
+          if (typeof name !== 'string' || !name.trim()) { sendJSON(res, 400, { error: 'name is required' }); return; }
+          if (!Array.isArray(urls) || urls.length === 0) { sendJSON(res, 400, { error: 'urls must be a non-empty array' }); return; }
+          if (typeof filters !== 'object' || filters === null) { sendJSON(res, 400, { error: 'filters is required' }); return; }
+          try {
+            const id = crypto.randomUUID();
+            stmts.insertSavedSearch.run(id, name.trim(), JSON.stringify(urls), JSON.stringify(filters), typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null, Date.now());
+            sendJSON(res, 200, { ok: true, id });
+          } catch (err) {
+            sendJSON(res, 500, { error: (err as Error).message });
+          }
           return;
         }
 

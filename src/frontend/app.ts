@@ -4,6 +4,15 @@ import type { Listing, ListingDetail } from '../lib/recipes/base';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
+interface SavedSearch {
+  id: string;
+  name: string;
+  urls: string[];
+  filters: FrontendFilters;
+  aiFilter: string | null;
+  createdAt: number;
+}
+
 interface ListingItem {
   data: Listing;
   deepSearched: boolean;
@@ -35,6 +44,7 @@ interface UrlCardState {
   listingUrls: string[];
 }
 
+let currentSearchName: string | null = null;
 let allListings: ListingItem[] = [];
 let showFilteredListings = false;
 let isDeepSearchRunning = false;
@@ -72,6 +82,15 @@ function getFilters(): FrontendFilters {
   };
 }
 
+
+function setFilters(f: FrontendFilters): void {
+  el<HTMLInputElement>('minPrice').value = f.minPrice != null ? String(f.minPrice) : '';
+  el<HTMLInputElement>('maxPrice').value = f.maxPrice != null ? String(f.maxPrice) : '';
+  el<HTMLInputElement>('keywords').value = f.keywords?.join(', ') ?? '';
+  el<HTMLInputElement>('excludeKeywords').value = f.excludeKeywords?.join(', ') ?? '';
+  el<HTMLInputElement>('filterShipping').checked = f.shippingAvailable ?? true;
+  el<HTMLInputElement>('filterPickup').checked = f.pickupAvailable ?? true;
+}
 
 function setCardStatus(state: UrlCardState, msg: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
   const bar = state.statusEl;
@@ -783,6 +802,81 @@ async function runDeepSearch(): Promise<void> {
   applyClientFilters();
 }
 
+function markDirty(): void {
+  el('saveCurrentBtn').classList.remove('hidden');
+}
+
+function setSearchName(name: string | null): void {
+  currentSearchName = name;
+  el('searchTitle').textContent = name ?? 'new shiny thing';
+  el('saveCurrentBtn').classList.add('hidden');
+}
+
+// ── Saved searches ────────────────────────────────────────────────────────────
+
+async function fetchSavedSearches(): Promise<void> {
+  try {
+    const res = await fetch('/api/saved-searches', { cache: 'no-store' });
+    const data = await res.json() as { searches: SavedSearch[] };
+    renderSavedSearches(data.searches);
+  } catch { /* non-critical */ }
+}
+
+function renderSavedSearches(searches: SavedSearch[]): void {
+  const list = el('savedSearchesList');
+  const count = el('savedSearchesCount');
+
+  count.textContent = String(searches.length);
+  count.classList.toggle('hidden', searches.length === 0);
+
+  if (searches.length === 0) {
+    list.innerHTML = '<p class="deep-empty">No saved searches yet.</p>';
+    return;
+  }
+  list.innerHTML = searches.map(s => `
+    <div class="saved-search-row" data-id="${esc(s.id)}">
+      <a class="saved-search-name load-saved-btn" href="#" title="${esc(s.name)}">${esc(s.name)}</a>
+      <span class="saved-search-date">${new Date(s.createdAt).toLocaleDateString()} ${new Date(s.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
+      <button class="btn btn-ghost delete-saved-btn" style="padding:0.25rem 0.65rem;font-size:0.78rem">✕</button>
+    </div>
+  `).join('');
+}
+
+async function saveCurrentSearch(name: string): Promise<void> {
+  const urls = urlCardStates.map(s => s.input.value.trim()).filter(Boolean);
+  if (!name.trim() || urls.length === 0) return;
+  const res = await fetch('/api/saved-searches', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: name.trim(), urls, filters: getFilters(), aiFilter: el<HTMLTextAreaElement>('aiFilter').value.trim() || null }),
+  });
+  if (res.ok) await fetchSavedSearches();
+}
+
+async function deleteSavedSearch(id: string): Promise<void> {
+  await fetch(`/api/saved-searches/${id}`, { method: 'DELETE' });
+  await fetchSavedSearches();
+}
+
+async function loadSavedSearch(search: SavedSearch): Promise<void> {
+  resetAllResults();
+  while (urlCardStates.length > 1) removeUrlCard(urlCardStates[urlCardStates.length - 1]);
+  if (search.urls.length === 0) return;
+  urlCardStates[0].input.value = search.urls[0];
+  updateCardSearchBtn(urlCardStates[0]);
+  for (let i = 1; i < search.urls.length; i++) {
+    const state = createUrlCard();
+    state.input.value = search.urls[i];
+    updateCardSearchBtn(state);
+  }
+  setFilters(search.filters);
+  el<HTMLTextAreaElement>('aiFilter').value = search.aiFilter ?? '';
+  setSearchName(search.name);
+  el('savedSearchesPanel').classList.add('hidden');
+  applyClientFilters();
+  for (const state of urlCardStates) searchUrlCard(state);
+}
+
 // ── Event listeners ───────────────────────────────────────────────────────────
 
 // Initialise with the first URL card and focus its input
@@ -810,14 +904,21 @@ el('toggleFilteredBtn').addEventListener('click', () => {
 
 
 el<HTMLTextAreaElement>('aiFilter').addEventListener('input', updateAiFilterBtn);
+el<HTMLTextAreaElement>('aiFilter').addEventListener('input', markDirty);
 el<HTMLButtonElement>('applyAiFilterBtn').addEventListener('click', () => runAiFilter());
 
 (['minPrice', 'maxPrice', 'keywords', 'excludeKeywords'] as const).forEach(id => {
   el(id).addEventListener('input', applyClientFilters);
+  el(id).addEventListener('input', markDirty);
 });
 (['filterShipping', 'filterPickup'] as const).forEach(id => {
   el(id).addEventListener('change', applyClientFilters);
+  el(id).addEventListener('change', markDirty);
 });
+
+// Mark dirty on any URL input change or new URL card
+el('urlCardsContainer').addEventListener('input', markDirty);
+el('addUrlBtn').addEventListener('click', markDirty);
 
 // Event delegation for description toggles (avoids global onclick)
 el('listingsContainer').addEventListener('click', (e: MouseEvent) => {
@@ -827,4 +928,65 @@ el('listingsContainer').addEventListener('click', (e: MouseEvent) => {
   if (collapsedBody) { expandExtras(collapsedBody); return; }
   const descBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.desc-toggle');
   if (descBtn) toggleDesc(descBtn);
+});
+
+// ── Saved searches UI ─────────────────────────────────────────────────────────
+
+el('savedSearchesToggle').addEventListener('click', () => {
+  const panel = el('savedSearchesPanel');
+  const nowHidden = panel.classList.toggle('hidden');
+  if (!nowHidden) fetchSavedSearches();
+});
+
+function openSaveModal(): void {
+  el<HTMLInputElement>('saveSearchName').value = '';
+  el('saveSearchModal').classList.remove('hidden');
+  el<HTMLInputElement>('saveSearchName').focus();
+}
+
+function closeSaveModal(): void {
+  el('saveSearchModal').classList.add('hidden');
+}
+
+el('saveCurrentBtn').addEventListener('click', openSaveModal);
+
+el('saveSearchCancelBtn').addEventListener('click', closeSaveModal);
+
+el('saveSearchModal').addEventListener('click', (e: MouseEvent) => {
+  if (e.target === el('saveSearchModal')) closeSaveModal();
+});
+
+el('saveSearchConfirmBtn').addEventListener('click', async () => {
+  const name = el<HTMLInputElement>('saveSearchName').value.trim();
+  if (!name) return;
+  const btn = el<HTMLButtonElement>('saveSearchConfirmBtn');
+  btn.disabled = true;
+  await saveCurrentSearch(name);
+  setSearchName(name);
+  closeSaveModal();
+  btn.disabled = false;
+  el('savedSearchesPanel').classList.remove('hidden');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+el<HTMLInputElement>('saveSearchName').addEventListener('keydown', (e: KeyboardEvent) => {
+  if (e.key === 'Enter') el<HTMLButtonElement>('saveSearchConfirmBtn').click();
+  if (e.key === 'Escape') closeSaveModal();
+});
+
+el('savedSearchesList').addEventListener('click', async (e: MouseEvent) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>('.saved-search-row');
+  if (!row) return;
+  const id = row.dataset.id!;
+  if ((e.target as HTMLElement).closest('.delete-saved-btn')) {
+    await deleteSavedSearch(id);
+    return;
+  }
+  if ((e.target as HTMLElement).closest('.load-saved-btn')) {
+    e.preventDefault();
+    const res = await fetch(`/api/saved-searches/${id}`);
+    if (!res.ok) return;
+    const { search } = await res.json() as { search: SavedSearch };
+    await loadSavedSearch(search);
+  }
 });
