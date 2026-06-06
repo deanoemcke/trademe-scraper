@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TradeMe MacBook Scraper</title>
+  <title>Sifty</title>
   <style>
     :root {
       --primary: #2563eb;
@@ -37,9 +37,10 @@
 
     .page { max-width: 860px; margin: 0 auto; padding: 2rem 1rem 4rem; }
 
-    header { margin-bottom: 1.75rem; }
-    header h1 { font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
-    header p { color: var(--text-muted); margin-top: 0.2rem; font-size: 0.875rem; }
+    header { margin-bottom: 1.75rem; display: flex; justify-content: center; }
+    header .brand { position: relative; display: flex; align-items: center; }
+    header .brand img { position: absolute; right: 100%; margin-right: 0.15rem; height: 5rem; width: auto; }
+    header h1 { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; }
 
     /* ── Cards ── */
     .card {
@@ -324,8 +325,10 @@
 <body>
 <div class="page">
   <header>
-    <h1>TradeMe MacBook Scraper</h1>
-    <p>Paste a TradeMe search URL to fetch listings, then filter results locally.</p>
+    <div class="brand">
+      <img src="sifty-logo.png" alt="Sifty logo">
+      <h1>Sifty</h1>
+    </div>
   </header>
 
   <!-- Search title bar -->
