@@ -950,7 +950,7 @@ el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
     errorEl.textContent = 'Discovery failed';
     errorEl.style.display = 'block';
   } finally {
-    btn.textContent = 'Give it to me!';
+    btn.textContent = 'Get it!';
     updateDiscoveryBtn();
   }
 });
