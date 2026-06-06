@@ -463,44 +463,43 @@ async function runAiFilter(): Promise<void> {
   const prompt = el<HTMLTextAreaElement>('aiFilter').value.trim();
   if (!prompt) return;
   const hash = promptHash(prompt);
-  const toCheck = allListings.filter(item => item.aiCheckedHash !== hash);
+  const toCheck = allListings.filter(item => item.aiCheckedHash !== hash && item.filterReason === null);
   if (toCheck.length === 0) return;
 
   const btn = el<HTMLButtonElement>('applyAiFilterBtn');
   btn.disabled = true;
-  btn.textContent = `Filtering ${toCheck.length}…`;
+  let checked = 0;
+  btn.textContent = `Filtering 0/${toCheck.length}…`;
+
+  let streamError: string | null = null;
 
   try {
-    const res = await fetch('/api/ai-filter', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt,
-        listings: toCheck.map(item => ({
-          url: item.data.url,
-          title: item.data.title,
-          price: item.data.price,
-          location: item.data.location,
-          description: item.data.description?.slice(0, 300) ?? '',
-        })),
-      }),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
-      throw new Error(err.error ?? `HTTP ${res.status}`);
-    }
-
-    const data = await res.json() as { results: Array<{ url: string; pass: boolean; reason: string | null }> };
-    for (const result of data.results) {
-      const item = listingsByUrl.get(result.url);
-      if (item) {
-        item.aiCheckedHash = hash;
-        item.aiFilterReason = result.pass ? null : (result.reason ?? 'Filtered by AI');
+    await streamPost('/api/ai-filter', {
+      prompt,
+      listings: toCheck.map(item => ({
+        url: item.data.url,
+        title: item.data.title,
+        price: item.data.price,
+        location: item.data.location,
+        description: item.data.description?.slice(0, 300) ?? '',
+      })),
+    }, (event) => {
+      if (event.type === 'result') {
+        for (const result of event.results as Array<{ url: string; pass: boolean; reason: string | null }>) {
+          const item = listingsByUrl.get(result.url);
+          if (item) {
+            item.aiCheckedHash = hash;
+            item.aiFilterReason = result.pass ? null : (result.reason ?? 'Filtered by AI');
+            checked++;
+          }
+        }
+        btn.textContent = `Filtering ${checked}/${toCheck.length}…`;
+        applyClientFilters();
+      } else if (event.type === 'error') {
+        streamError = event.message as string;
       }
-    }
-
-    applyClientFilters();
+    });
+    if (streamError) throw new Error(streamError);
   } catch (err) {
     setStatus((err as Error).message, 'error');
   } finally {

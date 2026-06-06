@@ -6,6 +6,7 @@ import path from 'path';
 import Database from 'better-sqlite3';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { getRecipeForUrl } from './src/lib/recipes/server';
+import { ConcurrencyQueue } from './src/lib/queue';
 import type { Listing, ListingDetail } from './src/lib/recipes/base';
 
 // ── Regions ───────────────────────────────────────────────────────────────────
@@ -139,7 +140,8 @@ function getAIConfig(): { url: string; model: string; apiKey: string } | string 
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function aiJSON(cfg: { url: string; model: string; apiKey: string }, label: string, systemMsg: string, userMsg: string, maxTokens: number): Promise<any> {
-  console.log(`[AI] ${label} → model: ${cfg.model}\n[system] ${systemMsg}\n[user] ${userMsg}`);
+  const trim = (s: string) => s.replace(/\s+/g, ' ').slice(0, 100);
+  console.log(`[AI] ${label} → model: ${cfg.model}\n[system] ${trim(systemMsg)}…\n[user] ${trim(userMsg)}…`);
   const r = await fetch(cfg.url, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
@@ -360,31 +362,37 @@ export default defineConfig({
           const aiCfg = getAIConfig();
           if (typeof aiCfg === 'string') { sendJSON(res, 500, { error: aiCfg }); return; }
 
-          const numberedListings = listings.map((l, i) =>
-            `${i + 1}. Title: "${l.title}" | Price: ${l.price} | Location: ${l.location}${l.description ? ` | Description: ${l.description}` : ''}`
-          ).join('\n');
+          const BATCH_SIZE = 50;
+          const systemMsg = 'You are filtering marketplace listings. For each listing decide if it matches the user\'s criteria. Only reject a listing if it explicitly contradicts the criteria — do not reject because information is missing or unstated. If the listing doesn\'t mention something the criteria requires, pass it. Respond ONLY with a JSON object containing a single "results" array, one object per listing in order: {"results":[{"index":1,"pass":true,"reason":null},…]}. "reason" is a short phrase when pass is false, otherwise null.';
 
-          let parsed: Array<{ index: number; pass: boolean; reason: string | null }>;
-          try {
-            const result = await aiJSON(
-              aiCfg, 'ai-filter',
-              'You are filtering marketplace listings. For each listing decide if it matches the user\'s criteria. Only reject a listing if it explicitly contradicts the criteria — do not reject because information is missing or unstated. If the listing doesn\'t mention something the criteria requires, pass it. Respond ONLY with a JSON object containing a single "results" array, one object per listing in order: {"results":[{"index":1,"pass":true,"reason":null},…]}. "reason" is a short phrase when pass is false, otherwise null.',
-              `Criteria: ${prompt}\n\nListings:\n${numberedListings}`,
-              4096
-            );
-            parsed = Array.isArray(result) ? result : (result.results ?? []);
-          } catch (err) {
-            sendJSON(res, 500, { error: (err as Error).message }); return;
+          startSSE(res);
+          const queue = new ConcurrencyQueue(3);
+          let rejected = 0;
+
+          const batches: typeof listings[] = [];
+          for (let offset = 0; offset < listings.length; offset += BATCH_SIZE) {
+            batches.push(listings.slice(offset, offset + BATCH_SIZE));
           }
 
-          const results = parsed.map(r => ({
-            url: listings[r.index - 1]?.url ?? '',
-            pass: r.pass,
-            reason: r.reason ?? null,
-          })).filter(r => r.url);
+          await Promise.all(batches.map(batch => queue.add(async () => {
+            const numbered = batch.map((l, i) =>
+              `${i + 1}. Title: "${l.title}" | Price: ${l.price} | Location: ${l.location}${l.description ? ` | Description: ${l.description}` : ''}`
+            ).join('\n');
+            try {
+              const result = await aiJSON(aiCfg, 'ai-filter', systemMsg, `Criteria: ${prompt}\n\nListings:\n${numbered}`, 4096);
+              const parsed: Array<{ index: number; pass: boolean; reason: string | null }> = Array.isArray(result) ? result : (result.results ?? []);
+              const results = parsed
+                .map(r => ({ url: batch[r.index - 1]?.url ?? '', pass: r.pass, reason: r.reason ?? null }))
+                .filter(r => r.url);
+              rejected += results.filter(r => !r.pass).length;
+              sse(res, { type: 'result', results });
+            } catch (err) {
+              sse(res, { type: 'error', message: (err as Error).message });
+            }
+          })));
 
-          console.log(`[ai-filter] checked ${listings.length} listings, ${results.filter(r => !r.pass).length} rejected`);
-          sendJSON(res, 200, { results });
+          console.log(`[ai-filter] checked ${listings.length} listings, ${rejected} rejected`);
+          res.end();
           return;
         }
 
