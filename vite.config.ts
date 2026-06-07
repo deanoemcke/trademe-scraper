@@ -376,7 +376,7 @@ export default defineConfig({
               [...toScrapeByRecipe.entries()].map(([recipeName, recipeListings]) => {
                 const recipe = getRecipeForUrl(recipeListings[0].url)!;
                 return recipe.deepSearch(recipeListings, (event) => {
-                  if (event.type === 'complete' && isDeepCancelled()) return;
+                  if (event.type === 'complete') return; // route handler owns termination
                   if (event.type === 'detail') {
                     stmts.setDetail.run(event.url, JSON.stringify(event.detail), Date.now());
                     console.log(`[cache][${recipeName}] stored detail for ${event.url}`);
