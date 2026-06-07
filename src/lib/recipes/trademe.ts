@@ -351,10 +351,10 @@ async function quickSearch(
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
-  const page = await context.newPage();
-
   try {
+    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    const page = await context.newPage();
+
     onEvent({ type: 'progress', message: 'Fetching page 1…' });
     const p1Promise = waitForSearchApiResponse(page);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -442,9 +442,9 @@ async function deepSearch(
   isCancelled?: () => boolean
 ): Promise<void> {
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
-
   try {
+    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+
     await Promise.all(
       listings.map((listing, i) =>
         enqueue(listing.url, async () => {
