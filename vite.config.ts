@@ -8,6 +8,7 @@ import type { IncomingMessage, ServerResponse } from 'http';
 import { getRecipeForUrl } from './src/lib/recipes/server';
 import { ConcurrencyQueue } from './src/lib/queue';
 import type { Listing, ListingDetail } from './src/lib/recipes/base';
+import { requireString, requireArray, requirePositiveNumber, requireListingUrl } from './src/lib/validate';
 
 // ── Regions ───────────────────────────────────────────────────────────────────
 
@@ -245,16 +246,22 @@ export default defineConfig({
         // ── Cancel search ─────────────────────────────────────────────────────
         if (req.url === '/api/cancel-search') {
           const body = await readBody(req).catch(() => null);
-          const searchId = (body as { searchId?: string })?.searchId;
-          if (searchId) cancelledSearches.add(searchId);
+          const searchId = (body as Record<string, unknown>)?.['searchId'];
+          if (typeof searchId === 'string' && searchId.trim()) cancelledSearches.add(searchId);
           sendJSON(res, 200, { ok: true }); return;
         }
 
         // ── Quick search ──────────────────────────────────────────────────────
         if (req.url === '/api/quick-search') {
           const body = await readBody(req).catch(() => null);
-          const { url, searchId } = (body ?? {}) as { url?: string; searchId?: string };
-          if (!url) { sendJSON(res, 400, { error: 'url is required' }); return; }
+          let url: string;
+          try {
+            url = requireString((body as Record<string, unknown>)?.['url'], 'url');
+          } catch (err) {
+            sendJSON(res, 400, { error: (err as Error).message }); return;
+          }
+          const searchId = (body as Record<string, unknown>)?.['searchId'];
+          const searchIdStr = typeof searchId === 'string' && searchId.trim() ? searchId : undefined;
 
           const recipe = getRecipeForUrl(url);
           if (!recipe) { sendJSON(res, 400, { error: 'No recipe found for this URL' }); return; }
@@ -272,8 +279,8 @@ export default defineConfig({
           }
 
           startSSE(res);
-          if (searchId) req.on('close', () => cancelledSearches.add(searchId));
-          const isCancelled = () => searchId ? cancelledSearches.has(searchId) : false;
+          if (searchIdStr) req.on('close', () => cancelledSearches.add(searchIdStr));
+          const isCancelled = () => searchIdStr ? cancelledSearches.has(searchIdStr) : false;
           const heartbeat = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch { /* ignore */ } }, 15000);
           const listings: Listing[] = [];
           try {
@@ -289,7 +296,7 @@ export default defineConfig({
             if (!isCancelled()) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
           } finally {
             clearInterval(heartbeat);
-            if (searchId) cancelledSearches.delete(searchId);
+            if (searchIdStr) cancelledSearches.delete(searchIdStr);
             try { res.end(); } catch { /* client already disconnected */ }
           }
           return;
@@ -298,15 +305,26 @@ export default defineConfig({
         // ── Deep search ───────────────────────────────────────────────────────
         if (req.url === '/api/deep-search') {
           const body = await readBody(req).catch(() => null);
-          const { listings, deepSearchId } = (body ?? {}) as { listings?: Listing[]; deepSearchId?: string };
-          if (!Array.isArray(listings) || listings.length === 0) {
-            sendJSON(res, 400, { error: 'listings array is required' }); return;
+          const rawBody = (body ?? {}) as Record<string, unknown>;
+
+          let validatedListings: Array<{ url: string } & Record<string, unknown>>;
+          try {
+            const rawListings = requireArray(rawBody['listings'], 'listings');
+            validatedListings = rawListings.map((item, i) => requireListingUrl(item, i));
+          } catch (err) {
+            sendJSON(res, 400, { error: (err as Error).message }); return;
           }
+
+          const deepSearchIdRaw = rawBody['deepSearchId'];
+          const deepSearchId = typeof deepSearchIdRaw === 'string' && deepSearchIdRaw.trim() ? deepSearchIdRaw : undefined;
+
+          // Cast to Listing[] — url has been validated; remaining fields are trusted from our own frontend
+          const listings = validatedListings as unknown as Listing[];
 
           // Group by recipe so mixed TradeMe+Facebook sets both get scraped
           const byRecipe = new Map<string, Listing[]>();
           for (const listing of listings) {
-            const r = listing.url ? getRecipeForUrl(listing.url) : null;
+            const r = getRecipeForUrl(listing.url);
             if (!r) continue;
             const group = byRecipe.get(r.name) ?? [];
             group.push(listing);
@@ -317,7 +335,7 @@ export default defineConfig({
           const fromCache: { url: string; detail: ListingDetail }[] = [];
           const toScrapeByRecipe = new Map<string, Listing[]>();
           for (const listing of listings) {
-            const r = listing.url ? getRecipeForUrl(listing.url) : null;
+            const r = getRecipeForUrl(listing.url);
             if (!r) continue;
             const row = stmts.getDetail.get(listing.url);
             if (row && isFresh(row.cached_at)) fromCache.push({ url: listing.url, detail: JSON.parse(row.data) as ListingDetail });
@@ -373,7 +391,7 @@ export default defineConfig({
         // ── Cache clear ───────────────────────────────────────────────────────
         if (req.url === '/api/cache/clear') {
           const body = await readBody(req).catch(() => null);
-          const type = (body as { type?: string })?.type;
+          const type = (body as Record<string, unknown>)?.['type'];
           if (type === 'quick-search') {
             const { n } = stmts.countSearch.get()!;
             stmts.clearSearch.run();
@@ -392,13 +410,17 @@ export default defineConfig({
         // ── AI filter ─────────────────────────────────────────────────────────
         if (req.url === '/api/ai-filter') {
           const body = await readBody(req).catch(() => null);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const listings = (body as any)?.listings as Array<{ url: string; title: string; price: string; location: string; description: string }> | undefined; // price is priceDisplay string
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const prompt = (body as any)?.prompt as string | undefined;
+          const rawBody = (body ?? {}) as Record<string, unknown>;
 
-          if (!Array.isArray(listings) || listings.length === 0 || !prompt?.trim()) {
-            sendJSON(res, 400, { error: 'listings and prompt are required' }); return;
+          let listings: Array<{ url: string; title: string; price: string; location: string; description: string }>;
+          let prompt: string;
+          try {
+            const rawListings = requireArray(rawBody['listings'], 'listings');
+            // Each item is trusted as the expected shape — url presence is the only safety-critical field
+            listings = rawListings.map((item, i) => requireListingUrl(item, i)) as typeof listings;
+            prompt = requireString(rawBody['prompt'], 'prompt');
+          } catch (err) {
+            sendJSON(res, 400, { error: (err as Error).message }); return;
           }
 
           const aiCfg = getAIConfig();
@@ -441,15 +463,19 @@ export default defineConfig({
 
         // ── Discover ─────────────────────────────────────────────────────────
         if (req.url === '/api/discover') {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const body = await readBody(req).catch(() => null);
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const discPrompt = (body as any)?.prompt as string | undefined;
-          const discMaxPrice = (body as any)?.maxPrice as number | undefined;
-          const discFulfillment = ((body as any)?.fulfillment as string | undefined) ?? 'any';
-          const discRegionValue = (body as any)?.regionValue as string | undefined;
-          if (!discPrompt?.trim()) { sendJSON(res, 400, { error: 'prompt is required' }); return; }
-          if (!discMaxPrice || discMaxPrice <= 0) { sendJSON(res, 400, { error: 'maxPrice is required' }); return; }
+          const rawBody = (body ?? {}) as Record<string, unknown>;
+
+          let discPrompt: string;
+          let discMaxPrice: number;
+          try {
+            discPrompt = requireString(rawBody['prompt'], 'prompt');
+            discMaxPrice = requirePositiveNumber(rawBody['maxPrice'], 'maxPrice');
+          } catch (err) {
+            sendJSON(res, 400, { error: (err as Error).message }); return;
+          }
+          const discFulfillment = typeof rawBody['fulfillment'] === 'string' ? rawBody['fulfillment'] : 'any';
+          const discRegionValue = typeof rawBody['regionValue'] === 'string' && rawBody['regionValue'].trim() ? rawBody['regionValue'] : undefined;
 
           const aiCfg = getAIConfig();
           if (typeof aiCfg === 'string') { sendJSON(res, 500, { error: aiCfg }); return; }
@@ -576,10 +602,18 @@ export default defineConfig({
         // ── Save search ───────────────────────────────────────────────────────
         if (req.url === '/api/saved-searches') {
           const body = await readBody(req).catch(() => null);
-          const { name, urls, filters, aiFilter } = (body ?? {}) as { name?: unknown; urls?: unknown; filters?: unknown; aiFilter?: unknown };
-          if (typeof name !== 'string' || !name.trim()) { sendJSON(res, 400, { error: 'name is required' }); return; }
-          if (!Array.isArray(urls) || urls.length === 0) { sendJSON(res, 400, { error: 'urls must be a non-empty array' }); return; }
+          const rawBody = (body ?? {}) as Record<string, unknown>;
+          let name: string;
+          let urls: unknown[];
+          try {
+            name = requireString(rawBody['name'], 'name');
+            urls = requireArray(rawBody['urls'], 'urls');
+          } catch (err) {
+            sendJSON(res, 400, { error: (err as Error).message }); return;
+          }
+          const filters = rawBody['filters'];
           if (typeof filters !== 'object' || filters === null) { sendJSON(res, 400, { error: 'filters is required' }); return; }
+          const aiFilter = rawBody['aiFilter'];
           try {
             const id = crypto.randomUUID();
             stmts.insertSavedSearch.run(id, name.trim(), JSON.stringify(urls), JSON.stringify(filters), typeof aiFilter === 'string' && aiFilter.trim() ? aiFilter.trim() : null, Date.now());
