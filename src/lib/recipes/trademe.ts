@@ -344,7 +344,10 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
   page.on('response', handler);
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(5000);
+  await page.waitForFunction(
+    () => document.body.innerText.includes('Shipping & pick-up options'),
+    { timeout: 10000 }
+  ).catch(() => { /* page may lack a shipping section — proceed with whatever rendered */ });
   page.off('response', handler);
 
   const bodyText: string = await page.evaluate(() => document.body.innerText);
