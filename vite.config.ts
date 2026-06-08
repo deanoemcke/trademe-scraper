@@ -9,6 +9,7 @@ import { getRecipeForUrl } from './src/lib/recipes/server';
 import { ConcurrencyQueue } from './src/lib/queue';
 import type { Listing, ListingDetail } from './src/lib/recipes/base';
 import { requireString, requireArray, requirePositiveNumber, requireListingUrl } from './src/lib/validate';
+import { registerSearch, cancelSearch, isSearchCancelled, cleanupSearch } from './src/server/cancellation';
 
 // ── Regions ───────────────────────────────────────────────────────────────────
 
@@ -137,8 +138,6 @@ function sendJSON(res: ServerResponse, status: number, body: unknown): void {
   res.end(json);
 }
 
-const cancelledSearches = new Set<string>();
-
 // ── AI provider ──────────────────────────────────────────────────────────────
 
 const AI_PROVIDERS: Record<string, { url: string; model: string; keyVar: string }> = {
@@ -255,7 +254,7 @@ export default defineConfig({
         if (req.url === '/api/cancel-search') {
           const body = await readBody(req).catch(() => null);
           const searchId = (body as Record<string, unknown>)?.['searchId'];
-          if (typeof searchId === 'string' && searchId.trim()) cancelledSearches.add(searchId);
+          if (typeof searchId === 'string' && searchId.trim()) cancelSearch(searchId);
           sendJSON(res, 200, { ok: true }); return;
         }
 
@@ -287,8 +286,11 @@ export default defineConfig({
           }
 
           startSSE(res);
-          if (searchIdStr) req.on('close', () => cancelledSearches.add(searchIdStr));
-          const isCancelled = () => searchIdStr ? cancelledSearches.has(searchIdStr) : false;
+          if (searchIdStr) {
+            registerSearch(searchIdStr);
+            req.on('close', () => cancelSearch(searchIdStr));
+          }
+          const isCancelled = () => searchIdStr ? isSearchCancelled(searchIdStr) : false;
           const heartbeat = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch { /* ignore */ } }, 15000);
           const listings: Listing[] = [];
           try {
@@ -304,7 +306,7 @@ export default defineConfig({
             if (!isCancelled()) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
           } finally {
             clearInterval(heartbeat);
-            if (searchIdStr) cancelledSearches.delete(searchIdStr);
+            if (searchIdStr) cleanupSearch(searchIdStr);
             try { res.end(); } catch { /* client already disconnected */ }
           }
           return;
@@ -366,8 +368,11 @@ export default defineConfig({
           if (fromCache.length > 0) console.log(`[cache] detail hit for ${fromCache.length}/${listings.length} listings`);
 
           startSSE(res);
-          if (deepSearchId) req.on('close', () => cancelledSearches.add(deepSearchId));
-          const isDeepCancelled = () => deepSearchId ? cancelledSearches.has(deepSearchId) : false;
+          if (deepSearchId) {
+            registerSearch(deepSearchId);
+            req.on('close', () => cancelSearch(deepSearchId));
+          }
+          const isDeepCancelled = () => deepSearchId ? isSearchCancelled(deepSearchId) : false;
           const deepHeartbeat = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch { /* ignore */ } }, 15000);
           for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
 
@@ -390,7 +395,7 @@ export default defineConfig({
             if (!isDeepCancelled()) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
           } finally {
             clearInterval(deepHeartbeat);
-            if (deepSearchId) cancelledSearches.delete(deepSearchId);
+            if (deepSearchId) cleanupSearch(deepSearchId);
             try { res.end(); } catch { /* client already disconnected */ }
           }
           return;
