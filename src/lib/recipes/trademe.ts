@@ -1,5 +1,6 @@
 import { chromium, Page, Response } from 'playwright';
 import type { Recipe, Listing, ListingDetail, QuickSearchEvent, DeepSearchEvent } from './base';
+import { RECIPE_PATTERNS } from './metadata';
 import { enqueue } from '../queue';
 import { MAX_PAGES_PER_SEARCH } from '../../server/constants';
 
@@ -494,10 +495,12 @@ async function deepSearch(
   }
 }
 
+const trademePattern = RECIPE_PATTERNS.find(p => p.name === 'trademe')!;
+
 export const trademeRecipe: Recipe = {
-  name: 'trademe',
+  name: trademePattern.name,
   matches(url: string): boolean {
-    try { return new URL(url).hostname.endsWith('trademe.co.nz'); }
+    try { return new URL(url).hostname.endsWith(trademePattern.hostname); }
     catch { return false; }
   },
   extractImplicitFilters,
