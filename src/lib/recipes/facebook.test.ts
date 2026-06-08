@@ -8,7 +8,9 @@ describe('parseFacebookPriceLines', () => {
     expect(result.price).toBe(80);
   });
 
-  it('uses only the first price and discards the original when two prices are present', () => {
+  it('discards the original (crossed-out) price when two prices are present, using only the current price', () => {
+    // Facebook shows the sale price first and the original price second.
+    // Product decision: we surface only the current price; the original is not stored or displayed.
     const result = parseFacebookPriceLines('Nice chair\nNZ$80\nNZ$120\nWellington');
     expect(result.priceDisplay).toBe('NZ$80');
     expect(result.price).toBe(80);
@@ -32,5 +34,22 @@ describe('parseFacebookPriceLines', () => {
     const result = parseFacebookPriceLines('Car\nNZ$1,200\nDunedin');
     expect(result.priceDisplay).toBe('NZ$1,200');
     expect(result.price).toBe(1200);
+  });
+
+  it('handles empty innerText gracefully', () => {
+    const result = parseFacebookPriceLines('');
+    expect(result.price).toBeNull();
+    expect(result.priceDisplay).toBe('Price on request');
+  });
+
+  it('handles whitespace-only innerText gracefully', () => {
+    const result = parseFacebookPriceLines('  \n  \n  ');
+    expect(result.price).toBeNull();
+    expect(result.priceDisplay).toBe('Price on request');
+  });
+
+  it('returns normalised lines for caller reuse', () => {
+    const result = parseFacebookPriceLines('Vintage lamp\nNZ$80\nAuckland');
+    expect(result.lines).toEqual(['Vintage lamp', 'NZ$80', 'Auckland']);
   });
 });

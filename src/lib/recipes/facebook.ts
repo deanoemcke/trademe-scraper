@@ -80,15 +80,16 @@ async function maskHeadless(page: Page): Promise<void> {
 
 // ── Listing extraction via MutationObserver ───────────────────────────────────
 
-const PRICE_RE = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
+export const PRICE_RE = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
 
-export function parseFacebookPriceLines(innerText: string): { price: number | null; priceDisplay: string } {
+export function parseFacebookPriceLines(innerText: string): { price: number | null; priceDisplay: string; lines: string[] } {
   const lines = innerText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const priceLines = lines.filter(l => PRICE_RE.test(l));
   const priceDisplay = priceLines.length === 0 ? 'Price on request' : priceLines[0];
   const priceMatch = priceLines[0]?.replace(/,/g, '').match(/[\d.]+/);
-  const price = priceMatch ? parseFloat(priceMatch[0]) : null;
-  return { price, priceDisplay };
+  const parsed = priceMatch ? parseFloat(priceMatch[0]) : NaN;
+  const price = isFinite(parsed) ? parsed : null;
+  return { price, priceDisplay, lines };
 }
 
 // Called from browser-side MutationObserver via page.exposeFunction.
@@ -104,8 +105,7 @@ function processRawListing(
   if (seen.has(raw.id)) return;
   seen.add(raw.id);
 
-  const { price, priceDisplay } = parseFacebookPriceLines(raw.innerText);
-  const innerLines = raw.innerText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const { price, priceDisplay, lines: innerLines } = parseFacebookPriceLines(raw.innerText);
 
   let title = '', location = 'Unknown';
   const ariaLabel = raw.ariaLabel.replace(/,\s*listing\s+\d+\s*$/i, '').trim();
