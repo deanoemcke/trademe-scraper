@@ -7,6 +7,8 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const FACEBOOK_BASE = 'https://www.facebook.com';
 
+const facebookPattern = RECIPE_PATTERNS.find(p => p.name === 'facebook')!;
+
 // ── Implicit filter extraction ────────────────────────────────────────────────
 
 export function extractImplicitFilters(urlStr: string): Array<[string, string]> {
@@ -92,6 +94,17 @@ export function parseFacebookPriceLines(innerText: string): { price: number | nu
   return { price, priceDisplay, lines };
 }
 
+export function buildFacebookListing(
+  url: string,
+  thumbnailUrl: string | undefined,
+  title: string,
+  price: number | null,
+  priceDisplay: string,
+  location: string,
+): Listing {
+  return { source: facebookPattern.name, title, price, priceDisplay, location, url, thumbnailUrl, isAuction: false };
+}
+
 // Called from browser-side MutationObserver via page.exposeFunction.
 // Runs in Node.js; returns void (browser side fire-and-forgets).
 type RawListingMsg = { id: string; url: string; ariaLabel: string; innerText: string; thumbnailUrl: string };
@@ -121,7 +134,7 @@ function processRawListing(
   if (!title) return;
 
   counter.total++;
-  onEvent({ type: 'listing', data: { title, price, priceDisplay, location, url: raw.url, thumbnailUrl: raw.thumbnailUrl || undefined, isAuction: false } });
+  onEvent({ type: 'listing', data: buildFacebookListing(raw.url, raw.thumbnailUrl || undefined, title, price, priceDisplay, location) });
 }
 
 // ── Quick search ──────────────────────────────────────────────────────────────
@@ -383,8 +396,6 @@ async function deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent)
 }
 
 // ── Recipe ────────────────────────────────────────────────────────────────────
-
-const facebookPattern = RECIPE_PATTERNS.find(p => p.name === 'facebook')!;
 
 export const facebookRecipe: Recipe = {
   name: facebookPattern.name,

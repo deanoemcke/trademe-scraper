@@ -1,4 +1,7 @@
+import type { RecipeSource } from './metadata';
+
 export interface Listing {
+  source: RecipeSource;
   title: string;
   price: number | null;
   priceDisplay: string;

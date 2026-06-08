@@ -8,6 +8,8 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const TRADEME_BASE = 'https://www.trademe.co.nz/a';
 
+const trademePattern = RECIPE_PATTERNS.find(p => p.name === 'trademe')!;
+
 type ApiItem = Record<string, unknown>;
 
 // ── Implicit filter extraction ────────────────────────────────────────────────
@@ -120,6 +122,7 @@ export function buildListing(raw: RawApiItem): Listing | null {
   const url = raw.canonicalPath ? `${TRADEME_BASE}${raw.canonicalPath}` : '';
   if (!raw.title || !url) return null;
   return {
+    source: trademePattern.name,
     title: raw.title,
     price: parsePriceValue(display),
     priceDisplay: display,
@@ -497,8 +500,6 @@ async function deepSearch(
     await browser.close();
   }
 }
-
-const trademePattern = RECIPE_PATTERNS.find(p => p.name === 'trademe')!;
 
 export const trademeRecipe: Recipe = {
   name: trademePattern.name,

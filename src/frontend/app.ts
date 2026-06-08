@@ -1,6 +1,8 @@
 import { computeFilterReason, type FrontendFilters } from '../lib/filters';
 import { canHandleUrl } from '../lib/recipes/matcher';
 import type { Listing, ListingDetail } from '../lib/recipes/base';
+import { esc } from './html';
+import { sourceFaviconHtml } from './recipeDisplay';
 import {
   type ListingItem,
   type UrlCardState,
@@ -28,13 +30,6 @@ function promptHash(s: string): number {
   return h;
 }
 
-function esc(s: string | number): string {
-  return String(s)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
 
 function el<T extends HTMLElement>(id: string): T {
   const elem = document.getElementById(id);
@@ -514,6 +509,7 @@ function getCardByUrl(url: string): HTMLElement | null {
   return id ? document.getElementById(id) : null;
 }
 
+
 function shippingBadge(fulfillment: Listing['fulfillment']): string {
   if (!fulfillment) return '';
   if (fulfillment.pickupAvailable && fulfillment.shippingAvailable) return '<span class="badge badge-both">Allows pickups</span>';
@@ -546,7 +542,8 @@ function buildPricesHtml(item: ListingItem): string {
 }
 
 function buildMetaHtml(item: ListingItem): string {
-  let html = `<span class="meta-text">📍 ${esc(item.data.location)}</span>`;
+  let html = sourceFaviconHtml(item.data.source);
+  html += `<span class="meta-text">📍 ${esc(item.data.location)}</span>`;
   const detail = item.detail;
   if (detail) {
     const { shippingAvailable, pickupAvailable } = detail;

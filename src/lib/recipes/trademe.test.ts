@@ -156,6 +156,11 @@ describe('buildListing', () => {
     const listing = buildListing({ ...baseRaw, pictureHref: undefined });
     expect(listing!.thumbnailUrl).toBeUndefined();
   });
+
+  it('sets source to trademe', () => {
+    const listing = buildListing(baseRaw);
+    expect(listing!.source).toBe('trademe');
+  });
 });
 
 // ── parseFrendState ───────────────────────────────────────────────────────────

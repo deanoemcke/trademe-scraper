@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseFacebookPriceLines } from './facebook';
+import { parseFacebookPriceLines, buildFacebookListing } from './facebook';
 
 describe('parseFacebookPriceLines', () => {
   it('returns the single price when only one price line is present', () => {
@@ -51,5 +51,17 @@ describe('parseFacebookPriceLines', () => {
   it('returns normalised lines for caller reuse', () => {
     const result = parseFacebookPriceLines('Vintage lamp\nNZ$80\nAuckland');
     expect(result.lines).toEqual(['Vintage lamp', 'NZ$80', 'Auckland']);
+  });
+});
+
+describe('buildFacebookListing', () => {
+  it('sets source to facebook', () => {
+    const listing = buildFacebookListing('https://facebook.com/marketplace/item/123', undefined, 'Vintage lamp', 80, 'NZ$80', 'Auckland');
+    expect(listing.source).toBe('facebook');
+  });
+
+  it('sets isAuction to false', () => {
+    const listing = buildFacebookListing('https://facebook.com/marketplace/item/123', undefined, 'Lamp', null, 'Price on request', 'Wellington');
+    expect(listing.isAuction).toBe(false);
   });
 });
