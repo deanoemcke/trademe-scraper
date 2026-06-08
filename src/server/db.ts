@@ -57,6 +57,26 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   },
 ];
 
+function hasColumn(db: Database.Database, table: string, column: string): boolean {
+  const row = db.prepare<[string, string], { n: number }>(
+    "SELECT COUNT(*) as n FROM pragma_table_info(?) WHERE name = ?"
+  ).get(table, column);
+  return (row?.n ?? 0) > 0;
+}
+
+function hasTable(db: Database.Database, table: string): boolean {
+  const row = db.prepare<[string], { n: number }>(
+    "SELECT COUNT(*) as n FROM sqlite_master WHERE type='table' AND name=?"
+  ).get(table);
+  return (row?.n ?? 0) > 0;
+}
+
+function detectExistingVersion(db: Database.Database): number {
+  if (!hasTable(db, 'quick_searches')) return 0;
+  if (!hasColumn(db, 'quick_searches', 'listing_count')) return 1;
+  return 2;
+}
+
 function readSchemaVersion(db: Database.Database): number {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
@@ -71,13 +91,20 @@ function writeSchemaVersion(db: Database.Database, version: number): void {
   db.prepare('UPDATE schema_version SET version = ?').run(version);
 }
 
-function applySchema(db: Database.Database): void {
-  const currentVersion = readSchemaVersion(db);
+export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
+
+export function applySchema(db: Database.Database): void {
+  const storedVersion = readSchemaVersion(db);
+  const currentVersion = storedVersion === 0 ? detectExistingVersion(db) : storedVersion;
   const pending = MIGRATIONS.filter(m => m.version > currentVersion);
 
-  if (pending.length === 0) return;
+  if (pending.length === 0) {
+    if (storedVersion === 0 && currentVersion > 0) writeSchemaVersion(db, currentVersion);
+    return;
+  }
 
   const applyAll = db.transaction(() => {
+    if (storedVersion === 0 && currentVersion > 0) writeSchemaVersion(db, currentVersion);
     for (const migration of pending) {
       db.exec(migration.sql);
       writeSchemaVersion(db, migration.version);
