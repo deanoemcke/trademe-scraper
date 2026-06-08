@@ -9,44 +9,79 @@ const DB_PATH = path.resolve(__dirname, '../../.cache/cache.db');
 
 let _db: Database.Database | null = null;
 
-function applySchema(db: Database.Database): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_version (
-      version INTEGER NOT NULL
-    );
-    INSERT INTO schema_version (version) SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
-    CREATE TABLE IF NOT EXISTS quick_searches (
-      url TEXT PRIMARY KEY,
-      data TEXT NOT NULL,
-      cached_at INTEGER NOT NULL,
-      listing_count INTEGER,
-      is_complete INTEGER NOT NULL DEFAULT 1
-    );
-    CREATE TABLE IF NOT EXISTS deep_details (
-      url TEXT PRIMARY KEY,
-      data TEXT NOT NULL,
-      cached_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS saved_searches (
-      id         TEXT PRIMARY KEY,
-      name       TEXT NOT NULL,
-      urls       TEXT NOT NULL,
-      filters    TEXT NOT NULL,
-      ai_filter  TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS trademe_categories (
-      slug        TEXT PRIMARY KEY,
-      display     TEXT NOT NULL,
-      depth       INTEGER NOT NULL,
-      parent_slug TEXT,
-      top2        TEXT NOT NULL
-    );
-  `);
+// Each entry is a numbered migration. The version number is the schema version
+// that will be recorded after the migration runs. Migrations run in order and
+// only when the stored version is below the migration's version number.
+const MIGRATIONS: Array<{ version: number; sql: string }> = [
+  {
+    version: 1,
+    sql: `
+      CREATE TABLE IF NOT EXISTS quick_searches (
+        url TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        cached_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS deep_details (
+        url TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        cached_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS saved_searches (
+        id         TEXT PRIMARY KEY,
+        name       TEXT NOT NULL,
+        urls       TEXT NOT NULL,
+        filters    TEXT NOT NULL,
+        ai_filter  TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS trademe_categories (
+        slug        TEXT PRIMARY KEY,
+        display     TEXT NOT NULL,
+        depth       INTEGER NOT NULL,
+        parent_slug TEXT,
+        top2        TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 2,
+    sql: `ALTER TABLE quick_searches ADD COLUMN listing_count INTEGER;`,
+  },
+  {
+    version: 3,
+    sql: `ALTER TABLE quick_searches ADD COLUMN is_complete INTEGER NOT NULL DEFAULT 1;`,
+  },
+];
 
-  // Migrate existing databases that predate the new quick_searches columns
-  try { db.exec('ALTER TABLE quick_searches ADD COLUMN listing_count INTEGER'); } catch { /* already exists */ }
-  try { db.exec('ALTER TABLE quick_searches ADD COLUMN is_complete INTEGER NOT NULL DEFAULT 1'); } catch { /* already exists */ }
+function readSchemaVersion(db: Database.Database): number {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
+    INSERT INTO schema_version (version) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
+  `);
+  const row = db.prepare<[], { version: number }>('SELECT version FROM schema_version').get();
+  if (row === undefined) throw new Error('schema_version table is empty after initialisation');
+  return row.version;
+}
+
+function writeSchemaVersion(db: Database.Database, version: number): void {
+  db.prepare('UPDATE schema_version SET version = ?').run(version);
+}
+
+function applySchema(db: Database.Database): void {
+  const currentVersion = readSchemaVersion(db);
+  const pending = MIGRATIONS.filter(m => m.version > currentVersion);
+
+  if (pending.length === 0) return;
+
+  const applyAll = db.transaction(() => {
+    for (const migration of pending) {
+      db.exec(migration.sql);
+      writeSchemaVersion(db, migration.version);
+    }
+  });
+
+  applyAll();
+  console.log(`[db] schema migrated from v${currentVersion} to v${pending[pending.length - 1].version}`);
 }
 
 function logDbStats(db: Database.Database): void {
