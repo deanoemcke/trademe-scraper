@@ -80,6 +80,17 @@ async function maskHeadless(page: Page): Promise<void> {
 
 // ── Listing extraction via MutationObserver ───────────────────────────────────
 
+const PRICE_RE = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
+
+export function parseFacebookPriceLines(innerText: string): { price: number | null; priceDisplay: string } {
+  const lines = innerText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  const priceLines = lines.filter(l => PRICE_RE.test(l));
+  const priceDisplay = priceLines.length === 0 ? 'Price on request' : priceLines[0];
+  const priceMatch = priceLines[0]?.replace(/,/g, '').match(/[\d.]+/);
+  const price = priceMatch ? parseFloat(priceMatch[0]) : null;
+  return { price, priceDisplay };
+}
+
 // Called from browser-side MutationObserver via page.exposeFunction.
 // Runs in Node.js; returns void (browser side fire-and-forgets).
 type RawListingMsg = { id: string; url: string; ariaLabel: string; innerText: string; thumbnailUrl: string };
@@ -93,14 +104,8 @@ function processRawListing(
   if (seen.has(raw.id)) return;
   seen.add(raw.id);
 
-  const priceRe = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
+  const { price, priceDisplay } = parseFacebookPriceLines(raw.innerText);
   const innerLines = raw.innerText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  const priceLines = innerLines.filter(l => priceRe.test(l));
-  const priceDisplay = priceLines.length === 0 ? 'Price on request'
-                     : priceLines.length >= 2  ? `${priceLines[0]} <s>${priceLines[1]}</s>`
-                     : priceLines[0];
-  const priceMatch = priceLines[0]?.replace(/,/g, '').match(/[\d.]+/);
-  const price = priceMatch ? parseFloat(priceMatch[0]) : null;
 
   let title = '', location = 'Unknown';
   const ariaLabel = raw.ariaLabel.replace(/,\s*listing\s+\d+\s*$/i, '').trim();
@@ -111,7 +116,7 @@ function processRawListing(
   }
   if (!title) {
     location = innerLines[innerLines.length - 1] ?? 'Unknown';
-    title    = innerLines.find(l => !priceRe.test(l) && l !== location) ?? '';
+    title    = innerLines.find(l => !PRICE_RE.test(l) && l !== location) ?? '';
   }
   if (!title) return;
 
