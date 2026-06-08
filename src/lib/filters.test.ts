@@ -1,7 +1,5 @@
-// @vitest-environment jsdom
-
-import { describe, it, expect, beforeEach } from 'vitest';
-import { matchesFilters, applyFiltersToDOM, type FrontendFilters } from './filters';
+import { describe, it, expect } from 'vitest';
+import { computeFilterReason, type FrontendFilters } from './filters';
 import type { Listing } from './recipes/base';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -17,158 +15,186 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
     price: 1500,
     priceDisplay: '$1,500',
     location: 'Auckland City, Auckland',
-    url: `https://www.trademe.co.nz/a/marketplace/listing/${Math.random()}`,
+    url: 'https://www.trademe.co.nz/a/marketplace/listing/12345',
     fulfillment: { pickupAvailable: true, shippingAvailable: true },
     ...overrides,
   };
 }
 
-// Renders listing cards into a container + count badge, applies filters,
-// then returns { visibleCount, badgeCount } for assertion.
-function setupAndApply(listings: Listing[], filters: FrontendFilters) {
-  const container = document.createElement('div');
-  const countEl = document.createElement('span');
+// ── computeFilterReason ───────────────────────────────────────────────────────
 
-  for (const listing of listings) {
-    const card = document.createElement('div');
-    card.className = 'listing-card';
-    card.setAttribute('data-url', listing.url);
-    container.appendChild(card);
-  }
+describe('computeFilterReason', () => {
+  // ── no filter ──────────────────────────────────────────────────────────────
 
-  const visibleCount = applyFiltersToDOM(listings, filters, container, countEl);
-  const domVisible = container.querySelectorAll<HTMLElement>('.listing-card:not([style*="display: none"])').length;
-
-  return { visibleCount, badgeCount: parseInt(countEl.textContent ?? '0'), domVisible };
-}
-
-// ── matchesFilters (unit) ─────────────────────────────────────────────────────
-
-describe('matchesFilters', () => {
-  it('passes all listings when no filters set', () => {
-    expect(matchesFilters(makeListing(), defaultFilters)).toBe(true);
+  it('returns null when no filters are set', () => {
+    expect(computeFilterReason(makeListing(), defaultFilters)).toBeNull();
   });
 
-  it('filters by minPrice', () => {
-    expect(matchesFilters(makeListing({ price: 900,   priceDisplay: '$900' }),   { ...defaultFilters, minPrice: 1000 })).toBe(false);
-    expect(matchesFilters(makeListing({ price: 1000,  priceDisplay: '$1,000' }), { ...defaultFilters, minPrice: 1000 })).toBe(true);
+  // ── price filter ───────────────────────────────────────────────────────────
+
+  it('returns "price" when listing price is below minPrice', () => {
+    expect(computeFilterReason(
+      makeListing({ price: 900, priceDisplay: '$900' }),
+      { ...defaultFilters, minPrice: 1000 },
+    )).toBe('price');
   });
 
-  it('filters by maxPrice', () => {
-    expect(matchesFilters(makeListing({ price: 2001,  priceDisplay: '$2,001' }), { ...defaultFilters, maxPrice: 2000 })).toBe(false);
-    expect(matchesFilters(makeListing({ price: 2000,  priceDisplay: '$2,000' }), { ...defaultFilters, maxPrice: 2000 })).toBe(true);
+  it('returns null when listing price equals minPrice', () => {
+    expect(computeFilterReason(
+      makeListing({ price: 1000, priceDisplay: '$1,000' }),
+      { ...defaultFilters, minPrice: 1000 },
+    )).toBeNull();
   });
 
-  it('filters by keywords (all must match, case-insensitive)', () => {
-    expect(matchesFilters(makeListing({ title: 'MacBook Pro M2' }), { ...defaultFilters, keywords: ['m2'] })).toBe(true);
-    expect(matchesFilters(makeListing({ title: 'MacBook Pro M1' }), { ...defaultFilters, keywords: ['m2'] })).toBe(false);
-    expect(matchesFilters(makeListing({ title: 'MacBook Pro M2 14"' }), { ...defaultFilters, keywords: ['m2', '14'] })).toBe(true);
-    expect(matchesFilters(makeListing({ title: 'MacBook Pro M2' }), { ...defaultFilters, keywords: ['m2', '14'] })).toBe(false);
+  it('returns "price" when listing price exceeds maxPrice', () => {
+    expect(computeFilterReason(
+      makeListing({ price: 2001, priceDisplay: '$2,001' }),
+      { ...defaultFilters, maxPrice: 2000 },
+    )).toBe('price');
   });
 
-  it('filters by excludeKeywords', () => {
-    expect(matchesFilters(makeListing({ title: 'MacBook Pro - faulty' }), { ...defaultFilters, excludeKeywords: ['faulty'] })).toBe(false);
-    expect(matchesFilters(makeListing({ title: 'MacBook Pro - excellent' }), { ...defaultFilters, excludeKeywords: ['faulty'] })).toBe(true);
+  it('returns null when listing price equals maxPrice', () => {
+    expect(computeFilterReason(
+      makeListing({ price: 2000, priceDisplay: '$2,000' }),
+      { ...defaultFilters, maxPrice: 2000 },
+    )).toBeNull();
   });
 
-  it('passes for both shipping and pickup when fulfillment has both', () => {
-    const listing = makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: true } });
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: true,  pickupAvailable: false })).toBe(true);
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: true  })).toBe(true);
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: false })).toBe(false);
+  it('returns null when price is null (unlisted price bypasses price filter)', () => {
+    expect(computeFilterReason(
+      makeListing({ price: null, priceDisplay: 'Make an offer' }),
+      { ...defaultFilters, minPrice: 1000, maxPrice: 500 },
+    )).toBeNull();
   });
 
-  it('filters by pickup — pickup only fulfillment', () => {
-    const listing = makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: false } });
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: true  })).toBe(true);
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: true,  pickupAvailable: false })).toBe(false);
-  });
-
-  it('passes listings with no fulfillment regardless of shipping filter', () => {
-    const listing = makeListing({ fulfillment: undefined });
-    expect(matchesFilters(listing, { ...defaultFilters, shippingAvailable: false, pickupAvailable: false })).toBe(true);
-  });
-});
-
-// ── applyFiltersToDOM (high-level) ────────────────────────────────────────────
-
-describe('applyFiltersToDOM', () => {
-  it('count badge matches number of visible cards with no filters', () => {
-    const listings = [makeListing(), makeListing(), makeListing()];
-    const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, defaultFilters);
-    expect(visibleCount).toBe(3);
-    expect(badgeCount).toBe(3);
-    expect(domVisible).toBe(3);
-  });
-
-  it('count badge and visible cards match after price filter', () => {
-    const listings = [
-      makeListing({ price: 500,   priceDisplay: '$500' }),
-      makeListing({ price: 1500,  priceDisplay: '$1,500' }),
-      makeListing({ price: 2500,  priceDisplay: '$2,500' }),
-    ];
-    const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, { ...defaultFilters, minPrice: 1000, maxPrice: 2000 });
-    expect(visibleCount).toBe(1);
-    expect(badgeCount).toBe(1);
-    expect(domVisible).toBe(1);
-  });
-
-  it('count badge and visible cards match after keyword filter', () => {
-    const listings = [
-      makeListing({ title: 'MacBook Pro M1' }),
-      makeListing({ title: 'MacBook Pro M2' }),
-      makeListing({ title: 'MacBook Pro M2 Pro' }),
-    ];
-    const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, { ...defaultFilters, keywords: ['M2'] });
-    expect(visibleCount).toBe(2);
-    expect(badgeCount).toBe(2);
-    expect(domVisible).toBe(2);
-  });
-
-  it('count badge and visible cards match after exclude filter', () => {
-    const listings = [
-      makeListing({ title: 'MacBook Pro M1' }),
-      makeListing({ title: 'MacBook Pro - faulty screen' }),
-      makeListing({ title: 'MacBook Pro - for parts' }),
-    ];
-    const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, { ...defaultFilters, excludeKeywords: ['faulty', 'parts'] });
-    expect(visibleCount).toBe(1);
-    expect(badgeCount).toBe(1);
-    expect(domVisible).toBe(1);
-  });
-
-  it('count badge and visible cards match after shipping filter', () => {
-    const listings = [
-      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: true  } }), // shipping + pickup
-      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: false } }), // pickup only
-      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: true  } }), // both
-    ];
-    const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, { ...defaultFilters, shippingAvailable: true, pickupAvailable: false });
-    expect(visibleCount).toBe(2); // shipping+pickup listings
-    expect(badgeCount).toBe(2);
-    expect(domVisible).toBe(2);
-  });
-
-  it('shows zero when no listings match', () => {
-    const listings = [
+  it('returns "price" when price falls outside both min and max range', () => {
+    expect(computeFilterReason(
       makeListing({ price: 500, priceDisplay: '$500' }),
-      makeListing({ price: 600, priceDisplay: '$600' }),
-    ];
-    const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, { ...defaultFilters, minPrice: 1000 });
-    expect(visibleCount).toBe(0);
-    expect(badgeCount).toBe(0);
-    expect(domVisible).toBe(0);
+      { ...defaultFilters, minPrice: 1000, maxPrice: 2000 },
+    )).toBe('price');
   });
 
-  it('shows all when filters are cleared (both shipping options checked)', () => {
-    const listings = [
-      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: true  } }),
-      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: false } }),
-      makeListing({ fulfillment: { pickupAvailable: true,  shippingAvailable: true  } }),
-    ];
-    const { visibleCount, badgeCount, domVisible } = setupAndApply(listings, defaultFilters);
-    expect(visibleCount).toBe(3);
-    expect(badgeCount).toBe(3);
-    expect(domVisible).toBe(3);
+  // ── keyword filter ─────────────────────────────────────────────────────────
+
+  it('returns "keyword" when title does not contain required keyword', () => {
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro M1' }),
+      { ...defaultFilters, keywords: ['m2'] },
+    )).toBe('keyword');
+  });
+
+  it('returns null when title contains all required keywords (case-insensitive)', () => {
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro M2 14"' }),
+      { ...defaultFilters, keywords: ['M2', '14'] },
+    )).toBeNull();
+  });
+
+  it('returns "keyword" when title contains only some required keywords', () => {
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro M2' }),
+      { ...defaultFilters, keywords: ['m2', '14'] },
+    )).toBe('keyword');
+  });
+
+  it('returns "keyword" when title matches an exclude keyword', () => {
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro - faulty screen' }),
+      { ...defaultFilters, excludeKeywords: ['faulty'] },
+    )).toBe('keyword');
+  });
+
+  it('returns "keyword" when description matches an exclude keyword', () => {
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro', description: 'Cracked screen, for parts only' }),
+      { ...defaultFilters, excludeKeywords: ['parts'] },
+    )).toBe('keyword');
+  });
+
+  it('returns null when neither title nor description matches any exclude keyword', () => {
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro M2', description: 'Excellent condition' }),
+      { ...defaultFilters, excludeKeywords: ['faulty', 'parts'] },
+    )).toBeNull();
+  });
+
+  it('returns null when excludeKeywords is empty', () => {
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro - faulty' }),
+      { ...defaultFilters, excludeKeywords: [] },
+    )).toBeNull();
+  });
+
+  // ── shipping/pickup filter ─────────────────────────────────────────────────
+
+  it('returns null when listing supports shipping and shipping filter is on', () => {
+    expect(computeFilterReason(
+      makeListing({ fulfillment: { pickupAvailable: false, shippingAvailable: true } }),
+      { ...defaultFilters, shippingAvailable: true, pickupAvailable: false },
+    )).toBeNull();
+  });
+
+  it('returns null when listing supports pickup and pickup filter is on', () => {
+    expect(computeFilterReason(
+      makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: false } }),
+      { ...defaultFilters, shippingAvailable: false, pickupAvailable: true },
+    )).toBeNull();
+  });
+
+  it('returns "shipping" when listing is pickup-only and only shipping filter is on', () => {
+    expect(computeFilterReason(
+      makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: false } }),
+      { ...defaultFilters, shippingAvailable: true, pickupAvailable: false },
+    )).toBe('shipping');
+  });
+
+  it('returns "shipping" when listing supports both but both filters are off', () => {
+    expect(computeFilterReason(
+      makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: true } }),
+      { ...defaultFilters, shippingAvailable: false, pickupAvailable: false },
+    )).toBe('shipping');
+  });
+
+  it('returns null when listing has no fulfillment data regardless of shipping filter', () => {
+    expect(computeFilterReason(
+      makeListing({ fulfillment: undefined }),
+      { ...defaultFilters, shippingAvailable: false, pickupAvailable: false },
+    )).toBeNull();
+  });
+
+  it('returns null when listing supports both and both filters are on', () => {
+    expect(computeFilterReason(
+      makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: true } }),
+      { ...defaultFilters, shippingAvailable: true, pickupAvailable: true },
+    )).toBeNull();
+  });
+
+  // ── combined filters ───────────────────────────────────────────────────────
+
+  it('returns "keyword" (first failing filter) when both keyword and price fail', () => {
+    // keyword check runs before price — first reason wins
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro M1', price: 500, priceDisplay: '$500' }),
+      { ...defaultFilters, keywords: ['m2'], minPrice: 1000 },
+    )).toBe('keyword');
+  });
+
+  it('returns "price" when keyword passes but price fails', () => {
+    expect(computeFilterReason(
+      makeListing({ title: 'MacBook Pro M2', price: 500, priceDisplay: '$500' }),
+      { ...defaultFilters, keywords: ['m2'], minPrice: 1000 },
+    )).toBe('price');
+  });
+
+  it('returns "shipping" when keyword and price pass but shipping fails', () => {
+    expect(computeFilterReason(
+      makeListing({
+        title: 'MacBook Pro M2',
+        price: 1500,
+        priceDisplay: '$1,500',
+        fulfillment: { pickupAvailable: true, shippingAvailable: false },
+      }),
+      { ...defaultFilters, keywords: ['m2'], minPrice: 1000, shippingAvailable: true, pickupAvailable: false },
+    )).toBe('shipping');
   });
 });
