@@ -1,5 +1,6 @@
 import { vi, describe, it, expect } from 'vitest';
 import {
+  mapFulfillment,
   parseSearchApiResponse,
   extractDescriptionFromText,
   extractDetails,
@@ -67,6 +68,37 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
 
 // Keep the listing helper available for future use
 makeListing;
+
+// ── mapFulfillment ────────────────────────────────────────────────────────────
+
+describe('mapFulfillment', () => {
+  it('value 0 returns undefined (no fulfillment data)', () => {
+    expect(mapFulfillment(0)).toBeUndefined();
+  });
+
+  it('value 1 returns ships NZ (pickup + shipping available)', () => {
+    expect(mapFulfillment(1)).toEqual({ pickupAvailable: true, shippingAvailable: true });
+  });
+
+  it('value 2 returns pickup only (no shipping)', () => {
+    expect(mapFulfillment(2)).toEqual({ pickupAvailable: true, shippingAvailable: false });
+  });
+
+  it('value 3 returns ships NZ paid (pickup + shipping available)', () => {
+    expect(mapFulfillment(3)).toEqual({ pickupAvailable: true, shippingAvailable: true });
+  });
+
+  it('undefined returns undefined', () => {
+    expect(mapFulfillment(undefined)).toBeUndefined();
+  });
+
+  it('unknown value warns and returns undefined', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(mapFulfillment(99)).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith('[trademe] unknown allowsPickups value: 99');
+    warnSpy.mockRestore();
+  });
+});
 
 // ── parseSearchApiResponse ────────────────────────────────────────────────────
 

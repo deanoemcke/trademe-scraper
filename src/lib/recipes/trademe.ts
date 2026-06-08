@@ -88,11 +88,18 @@ function parsePriceValue(display: string): number | null {
   return match ? parseFloat(match[0]) : null;
 }
 
-function mapFulfillment(allowsPickups?: number): { pickupAvailable: boolean; shippingAvailable: boolean } | undefined {
-  if (allowsPickups === 1) return { pickupAvailable: true, shippingAvailable: true };
-  if (allowsPickups === 2) return { pickupAvailable: true, shippingAvailable: false };
-  if (allowsPickups === 3) return { pickupAvailable: true, shippingAvailable: true };
-  return undefined;
+export function mapFulfillment(raw: number | undefined): { pickupAvailable: boolean; shippingAvailable: boolean } | undefined {
+  switch (raw) {
+    case 1: return { pickupAvailable: true, shippingAvailable: true };  // ships NZ
+    case 2: return { pickupAvailable: true, shippingAvailable: false }; // pickup only
+    case 3: return { pickupAvailable: true, shippingAvailable: true };  // ships NZ (paid)
+    case 0:
+    case undefined:
+      return undefined;
+    default:
+      console.warn(`[trademe] unknown allowsPickups value: ${raw}`);
+      return undefined;
+  }
 }
 
 // ── API response parsing ──────────────────────────────────────────────────────
@@ -115,7 +122,7 @@ export function parseFrendState(state: Record<string, unknown>): { listings: Lis
           url: (item.canonicalPath as string) ? `${TRADEME_BASE}${item.canonicalPath}` : '',
           thumbnailUrl: ((item.pictureHref as string) || undefined)
             ?.replace('/photoserver/thumb/', '/photoserver/full/'),
-          fulfillment: mapFulfillment((item.allowsPickups as number) || undefined),
+          fulfillment: mapFulfillment(item.allowsPickups as number | undefined),
           isAuction: true,
         };
       })
@@ -140,7 +147,7 @@ export function parseSearchApiResponse(data: Record<string, unknown>): { listing
         url: (item.CanonicalPath as string) ? `${TRADEME_BASE}${item.CanonicalPath}` : '',
         thumbnailUrl: ((item.PictureHref as string) || undefined)
           ?.replace('/photoserver/thumb/', '/photoserver/full/'),
-        fulfillment: mapFulfillment((item.AllowsPickups as number) || undefined),
+        fulfillment: mapFulfillment(item.AllowsPickups as number | undefined),
         isAuction: true,
       };
     })
