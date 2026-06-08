@@ -27,7 +27,10 @@ export function computeFilterReason(listing: Listing, filters: FrontendFilters):
     if (filters.maxPrice !== undefined && listing.price > filters.maxPrice) return 'price';
   }
 
-  if (listing.fulfillment !== undefined) {
+  // When both checkboxes are unchecked, treat it as "no fulfillment filter" —
+  // unchecking everything means the user does not want to filter by fulfillment.
+  const fulfillmentFilterActive = filters.shippingAvailable || filters.pickupAvailable;
+  if (fulfillmentFilterActive && listing.fulfillment !== undefined) {
     const { pickupAvailable, shippingAvailable } = listing.fulfillment;
     const matches = (filters.shippingAvailable && shippingAvailable) ||
                     (filters.pickupAvailable   && pickupAvailable);

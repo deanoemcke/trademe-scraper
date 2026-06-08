@@ -148,11 +148,18 @@ describe('computeFilterReason', () => {
     )).toBe('shipping');
   });
 
-  it('returns "shipping" when listing supports both but both filters are off', () => {
+  it('returns null when both filters are off (treated as no fulfillment filter)', () => {
     expect(computeFilterReason(
       makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: true } }),
       { ...defaultFilters, shippingAvailable: false, pickupAvailable: false },
-    )).toBe('shipping');
+    )).toBeNull();
+  });
+
+  it('returns null when both filters are off and listing is pickup-only (no fulfillment filter applied)', () => {
+    expect(computeFilterReason(
+      makeListing({ fulfillment: { pickupAvailable: true, shippingAvailable: false } }),
+      { ...defaultFilters, shippingAvailable: false, pickupAvailable: false },
+    )).toBeNull();
   });
 
   it('returns null when listing has no fulfillment data regardless of shipping filter', () => {
