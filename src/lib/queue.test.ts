@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { ConcurrencyQueue, enqueue } from './queue';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { ConcurrencyQueue, createRegistry } from './queue';
 
 // A deferred task: doesn't resolve until you call finish().
 function makeTask<T = void>(value: T) {
@@ -169,6 +169,9 @@ function makeBlocker(counter: { v: number; max: number }, combinedRef?: { v: num
 }
 
 describe('enqueue — pagination concurrency', () => {
+  let enqueue: ReturnType<typeof createRegistry>;
+  beforeEach(() => { enqueue = createRegistry(); });
+
   it('paginated TradeMe URLs (same hostname, different ?page=N) share one queue and start concurrently', async () => {
     const searchUrl = 'https://www.trademe.co.nz/a/marketplace/search?search_string=macbook';
     const totalPages = 5;
@@ -207,6 +210,9 @@ describe('enqueue — pagination concurrency', () => {
 });
 
 describe('enqueue (domain registry)', () => {
+  let enqueue: ReturnType<typeof createRegistry>;
+  beforeEach(() => { enqueue = createRegistry(); });
+
   it('two searches for the same domain share a single concurrency limit', async () => {
     const active = { v: 0, max: 0 };
 

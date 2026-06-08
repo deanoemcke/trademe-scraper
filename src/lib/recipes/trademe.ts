@@ -1,6 +1,8 @@
 import { chromium, Page, Response } from 'playwright';
 import type { Recipe, Listing, ListingDetail, QuickSearchEvent, DeepSearchEvent } from './base';
+import { RECIPE_PATTERNS } from './metadata';
 import { enqueue } from '../queue';
+import { MAX_PAGES_PER_SEARCH } from '../../server/constants';
 
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -87,14 +89,47 @@ function parsePriceValue(display: string): number | null {
   return match ? parseFloat(match[0]) : null;
 }
 
-function mapFulfillment(allowsPickups?: number): { pickupAvailable: boolean; shippingAvailable: boolean } | undefined {
-  if (allowsPickups === 1) return { pickupAvailable: true, shippingAvailable: true };
-  if (allowsPickups === 2) return { pickupAvailable: true, shippingAvailable: false };
-  if (allowsPickups === 3) return { pickupAvailable: true, shippingAvailable: true };
-  return undefined;
+export function mapFulfillment(raw: number | undefined): { pickupAvailable: boolean; shippingAvailable: boolean } | undefined {
+  switch (raw) {
+    case 1: return { pickupAvailable: true, shippingAvailable: true };  // ships NZ
+    case 2: return { pickupAvailable: true, shippingAvailable: false }; // pickup only
+    case 3: return { pickupAvailable: true, shippingAvailable: true };  // ships NZ (paid)
+    case 0:
+    case undefined:
+      return undefined;
+    default:
+      console.warn(`[trademe] unknown allowsPickups value: ${raw}`);
+      return undefined;
+  }
 }
 
 // ── API response parsing ──────────────────────────────────────────────────────
+
+export type RawApiItem = {
+  title: string;
+  priceDisplay: string;
+  suburb?: string;
+  region?: string;
+  canonicalPath: string;
+  pictureHref?: string;
+  allowsPickups?: number;
+};
+
+export function buildListing(raw: RawApiItem): Listing | null {
+  const display = raw.priceDisplay || 'Price on request';
+  const url = raw.canonicalPath ? `${TRADEME_BASE}${raw.canonicalPath}` : '';
+  if (!raw.title || !url) return null;
+  return {
+    title: raw.title,
+    price: parsePriceValue(display),
+    priceDisplay: display,
+    location: [raw.suburb, raw.region].filter(Boolean).join(', ') || 'Unknown',
+    url,
+    thumbnailUrl: raw.pictureHref?.replace('/photoserver/thumb/', '/photoserver/full/'),
+    fulfillment: mapFulfillment(raw.allowsPickups),
+    isAuction: true,
+  };
+}
 
 export function parseFrendState(state: Record<string, unknown>): { listings: Listing[]; totalCount: number; pageSize: number } | null {
   for (const value of Object.values(state)) {
@@ -104,21 +139,17 @@ export function parseFrendState(state: Record<string, unknown>): { listings: Lis
     const totalCount = (b.totalCount as number) ?? 0;
     const pageSize = (b.pageSize as number) || (items.length || 1);
     const listings = items
-      .map((item) => {
-        const display = (item.priceDisplay as string) || 'Price on request';
-        return {
-          title: (item.title as string) ?? '',
-          price: parsePriceValue(display),
-          priceDisplay: display,
-          location: [(item.suburb as string), (item.region as string)].filter(Boolean).join(', ') || 'Unknown',
-          url: (item.canonicalPath as string) ? `${TRADEME_BASE}${item.canonicalPath}` : '',
-          thumbnailUrl: ((item.pictureHref as string) || undefined)
-            ?.replace('/photoserver/thumb/', '/photoserver/full/'),
-          fulfillment: mapFulfillment((item.allowsPickups as number) || undefined),
-          isAuction: true,
-        };
-      })
-      .filter((l) => l.title && l.url);
+      .map((item): RawApiItem => ({
+        title: (item.title as string) ?? '',
+        priceDisplay: (item.priceDisplay as string) ?? '',
+        suburb: item.suburb as string | undefined,
+        region: item.region as string | undefined,
+        canonicalPath: (item.canonicalPath as string) ?? '',
+        pictureHref: (item.pictureHref as string) || undefined,
+        allowsPickups: item.allowsPickups as number | undefined,
+      }))
+      .map(buildListing)
+      .filter((l): l is Listing => l !== null);
     if (listings.length > 0) return { listings, totalCount, pageSize };
   }
   return null;
@@ -129,21 +160,17 @@ export function parseSearchApiResponse(data: Record<string, unknown>): { listing
   const totalCount = (data?.TotalCount as number) ?? 0;
   const pageSize = (data?.PageSize as number) || (items.length || 1);
   const listings = items
-    .map((item) => {
-      const display = (item.PriceDisplay as string) || 'Price on request';
-      return {
-        title: (item.Title as string) ?? '',
-        price: parsePriceValue(display),
-        priceDisplay: display,
-        location: [(item.Suburb as string), (item.Region as string)].filter(Boolean).join(', ') || 'Unknown',
-        url: (item.CanonicalPath as string) ? `${TRADEME_BASE}${item.CanonicalPath}` : '',
-        thumbnailUrl: ((item.PictureHref as string) || undefined)
-          ?.replace('/photoserver/thumb/', '/photoserver/full/'),
-        fulfillment: mapFulfillment((item.AllowsPickups as number) || undefined),
-        isAuction: true,
-      };
-    })
-    .filter((l) => l.title && l.url);
+    .map((item): RawApiItem => ({
+      title: (item.Title as string) ?? '',
+      priceDisplay: (item.PriceDisplay as string) ?? '',
+      suburb: item.Suburb as string | undefined,
+      region: item.Region as string | undefined,
+      canonicalPath: (item.CanonicalPath as string) ?? '',
+      pictureHref: (item.PictureHref as string) || undefined,
+      allowsPickups: item.AllowsPickups as number | undefined,
+    }))
+    .map(buildListing)
+    .filter((l): l is Listing => l !== null);
   return { listings, totalCount, pageSize };
 }
 
@@ -317,7 +344,10 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
   page.on('response', handler);
 
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-  await page.waitForTimeout(5000);
+  await page.waitForFunction(
+    () => document.body.innerText.includes('Shipping & pick-up options'),
+    { timeout: 10000 }
+  ).catch(() => { /* page may lack a shipping section — proceed with whatever rendered */ });
   page.off('response', handler);
 
   const bodyText: string = await page.evaluate(() => document.body.innerText);
@@ -351,10 +381,10 @@ async function quickSearch(
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
-  const page = await context.newPage();
-
   try {
+    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+    const page = await context.newPage();
+
     onEvent({ type: 'progress', message: 'Fetching page 1…' });
     const p1Promise = waitForSearchApiResponse(page);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
@@ -378,7 +408,7 @@ async function quickSearch(
       ({ listings: p1Listings, totalCount, pageSize } = await p1Promise);
     }
 
-    const totalPages = Math.ceil(totalCount / pageSize);
+    const totalPages = Math.min(Math.ceil(totalCount / pageSize), MAX_PAGES_PER_SEARCH);
 
     onEvent({ type: 'progress', message: `${totalCount} results across ${totalPages} page${totalPages !== 1 ? 's' : ''}` });
 
@@ -442,9 +472,9 @@ async function deepSearch(
   isCancelled?: () => boolean
 ): Promise<void> {
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
-
   try {
+    const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
+
     await Promise.all(
       listings.map((listing, i) =>
         enqueue(listing.url, async () => {
@@ -468,10 +498,12 @@ async function deepSearch(
   }
 }
 
+const trademePattern = RECIPE_PATTERNS.find(p => p.name === 'trademe')!;
+
 export const trademeRecipe: Recipe = {
-  name: 'trademe',
+  name: trademePattern.name,
   matches(url: string): boolean {
-    try { return new URL(url).hostname.endsWith('trademe.co.nz'); }
+    try { return new URL(url).hostname.endsWith(trademePattern.hostname); }
     catch { return false; }
   },
   extractImplicitFilters,

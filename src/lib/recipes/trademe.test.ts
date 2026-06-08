@@ -1,5 +1,8 @@
 import { vi, describe, it, expect } from 'vitest';
 import {
+  mapFulfillment,
+  buildListing,
+  parseFrendState,
   parseSearchApiResponse,
   extractDescriptionFromText,
   extractDetails,
@@ -67,6 +70,151 @@ function makeListing(overrides: Partial<Listing> = {}): Listing {
 
 // Keep the listing helper available for future use
 makeListing;
+
+// ── mapFulfillment ────────────────────────────────────────────────────────────
+
+describe('mapFulfillment', () => {
+  it('value 0 returns undefined (no fulfillment data)', () => {
+    expect(mapFulfillment(0)).toBeUndefined();
+  });
+
+  it('value 1 returns ships NZ (pickup + shipping available)', () => {
+    expect(mapFulfillment(1)).toEqual({ pickupAvailable: true, shippingAvailable: true });
+  });
+
+  it('value 2 returns pickup only (no shipping)', () => {
+    expect(mapFulfillment(2)).toEqual({ pickupAvailable: true, shippingAvailable: false });
+  });
+
+  it('value 3 returns ships NZ paid (pickup + shipping available)', () => {
+    expect(mapFulfillment(3)).toEqual({ pickupAvailable: true, shippingAvailable: true });
+  });
+
+  it('undefined returns undefined', () => {
+    expect(mapFulfillment(undefined)).toBeUndefined();
+  });
+
+  it('unknown value warns and returns undefined', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(mapFulfillment(99)).toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith('[trademe] unknown allowsPickups value: 99');
+    warnSpy.mockRestore();
+  });
+});
+
+// ── buildListing ──────────────────────────────────────────────────────────────
+
+describe('buildListing', () => {
+  const baseRaw = {
+    title: 'MacBook Pro 14"',
+    priceDisplay: '$1,500',
+    suburb: 'Auckland City',
+    region: 'Auckland',
+    canonicalPath: '/marketplace/computers/laptops/laptops/apple/listing/99999',
+    pictureHref: 'https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg',
+    allowsPickups: 3,
+  };
+
+  it('builds a Listing from a valid RawApiItem', () => {
+    const listing = buildListing(baseRaw);
+    expect(listing).not.toBeNull();
+    expect(listing!.title).toBe('MacBook Pro 14"');
+    expect(listing!.price).toBe(1500);
+    expect(listing!.priceDisplay).toBe('$1,500');
+    expect(listing!.location).toBe('Auckland City, Auckland');
+    expect(listing!.url).toBe('https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999');
+    expect(listing!.thumbnailUrl).toBe('https://trademe.tmcdn.co.nz/photoserver/full/123.jpg');
+    expect(listing!.fulfillment).toEqual({ pickupAvailable: true, shippingAvailable: true });
+    expect(listing!.isAuction).toBe(true);
+  });
+
+  it('returns null when title is empty', () => {
+    expect(buildListing({ ...baseRaw, title: '' })).toBeNull();
+  });
+
+  it('returns null when canonicalPath is empty', () => {
+    expect(buildListing({ ...baseRaw, canonicalPath: '' })).toBeNull();
+  });
+
+  it('falls back to "Price on request" when priceDisplay is empty', () => {
+    const listing = buildListing({ ...baseRaw, priceDisplay: '' });
+    expect(listing!.priceDisplay).toBe('Price on request');
+    expect(listing!.price).toBeNull();
+  });
+
+  it('falls back to "Unknown" location when suburb and region are absent', () => {
+    const listing = buildListing({ ...baseRaw, suburb: undefined, region: undefined });
+    expect(listing!.location).toBe('Unknown');
+  });
+
+  it('uses region alone when suburb is absent', () => {
+    const listing = buildListing({ ...baseRaw, suburb: undefined });
+    expect(listing!.location).toBe('Auckland');
+  });
+
+  it('omits thumbnailUrl when pictureHref is absent', () => {
+    const listing = buildListing({ ...baseRaw, pictureHref: undefined });
+    expect(listing!.thumbnailUrl).toBeUndefined();
+  });
+});
+
+// ── parseFrendState ───────────────────────────────────────────────────────────
+
+describe('parseFrendState', () => {
+  const baseItem = {
+    title: 'MacBook Pro 14"',
+    priceDisplay: '$1,500',
+    region: 'Auckland',
+    suburb: 'Auckland City',
+    canonicalPath: '/marketplace/computers/laptops/laptops/apple/listing/99999',
+    pictureHref: 'https://trademe.tmcdn.co.nz/photoserver/thumb/123.jpg',
+    allowsPickups: 3,
+  };
+
+  it('extracts listings from the nested frend-state structure', () => {
+    const state = { someKey: { b: { list: [baseItem], totalCount: 1, pageSize: 56 } } };
+    const result = parseFrendState(state);
+    expect(result).not.toBeNull();
+    expect(result!.listings).toHaveLength(1);
+    expect(result!.listings[0].title).toBe('MacBook Pro 14"');
+    expect(result!.listings[0].url).toBe('https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/99999');
+    expect(result!.totalCount).toBe(1);
+    expect(result!.pageSize).toBe(56);
+  });
+
+  it('returns null when no matching frend-state bucket is found', () => {
+    expect(parseFrendState({ someKey: { b: { notList: [] } } })).toBeNull();
+  });
+
+  it('filters out items missing title or canonicalPath', () => {
+    const items = [baseItem, { ...baseItem, title: '' }, { ...baseItem, canonicalPath: '' }];
+    const state = { key: { b: { list: items, totalCount: 3, pageSize: 56 } } };
+    const result = parseFrendState(state);
+    expect(result!.listings).toHaveLength(1);
+  });
+
+  it('produces listings with the same shape as parseSearchApiResponse', () => {
+    const frendState = { key: { b: { list: [baseItem], totalCount: 1, pageSize: 56 } } };
+    const apiData = {
+      List: [{
+        Title: baseItem.title,
+        PriceDisplay: baseItem.priceDisplay,
+        Region: baseItem.region,
+        Suburb: baseItem.suburb,
+        CanonicalPath: baseItem.canonicalPath,
+        PictureHref: baseItem.pictureHref,
+        AllowsPickups: baseItem.allowsPickups,
+      }],
+      TotalCount: 1,
+      PageSize: 56,
+    };
+
+    const frendResult = parseFrendState(frendState)!.listings[0];
+    const apiResult = parseSearchApiResponse(apiData).listings[0];
+
+    expect(frendResult).toEqual(apiResult);
+  });
+});
 
 // ── parseSearchApiResponse ────────────────────────────────────────────────────
 

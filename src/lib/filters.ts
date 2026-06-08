@@ -27,7 +27,10 @@ export function computeFilterReason(listing: Listing, filters: FrontendFilters):
     if (filters.maxPrice !== undefined && listing.price > filters.maxPrice) return 'price';
   }
 
-  if (listing.fulfillment !== undefined) {
+  // When both checkboxes are unchecked, treat it as "no fulfillment filter" —
+  // unchecking everything means the user does not want to filter by fulfillment.
+  const fulfillmentFilterActive = filters.shippingAvailable || filters.pickupAvailable;
+  if (fulfillmentFilterActive && listing.fulfillment !== undefined) {
     const { pickupAvailable, shippingAvailable } = listing.fulfillment;
     const matches = (filters.shippingAvailable && shippingAvailable) ||
                     (filters.pickupAvailable   && pickupAvailable);
@@ -39,23 +42,4 @@ export function computeFilterReason(listing: Listing, filters: FrontendFilters):
 
 export function matchesFilters(listing: Listing, filters: FrontendFilters): boolean {
   return computeFilterReason(listing, filters) === null;
-}
-
-// Applies filters to a set of rendered listing cards in the DOM.
-// Each card must have data-url set. Returns the visible count.
-export function applyFiltersToDOM(
-  listings: Listing[],
-  filters: FrontendFilters,
-  container: HTMLElement,
-  countEl: HTMLElement
-): number {
-  let visible = 0;
-  for (const listing of listings) {
-    const show = matchesFilters(listing, filters);
-    const card = container.querySelector<HTMLElement>(`[data-url="${listing.url}"]`);
-    if (card) card.style.display = show ? '' : 'none';
-    if (show) visible++;
-  }
-  countEl.textContent = String(visible);
-  return visible;
 }

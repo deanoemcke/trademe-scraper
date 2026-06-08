@@ -7,14 +7,7 @@ export class ConcurrencyQueue {
   add<T>(fn: () => Promise<T>): Promise<T> {
     return new Promise((resolve, reject) => {
       this.queue.push(() => {
-        let p: Promise<T>;
-        try { p = fn(); } catch (err) {
-          this.active--;
-          this.drain();
-          reject(err);
-          return;
-        }
-        p.then(resolve, reject).finally(() => {
+        Promise.resolve().then(fn).then(resolve, reject).finally(() => {
           this.active--;
           this.drain();
         });
@@ -38,20 +31,22 @@ const DOMAIN_CONCURRENCY: Record<string, number> = {
   'facebook.com': 2,
 };
 
-const registry = new Map<string, ConcurrencyQueue>();
-
-function getQueue(url: string): ConcurrencyQueue {
-  let hostname: string;
-  try { hostname = new URL(url).hostname; }
-  catch { hostname = url; }
-  if (!registry.has(hostname)) {
-    const concurrency =
-      Object.entries(DOMAIN_CONCURRENCY).find(([d]) => hostname.endsWith(d))?.[1] ?? 2;
-    registry.set(hostname, new ConcurrencyQueue(concurrency));
-  }
-  return registry.get(hostname)!;
+function resolveHostname(url: string): string {
+  try { return new URL(url).hostname; }
+  catch { return url; }
 }
 
-export function enqueue<T>(url: string, fn: () => Promise<T>): Promise<T> {
-  return getQueue(url).add(fn);
+export function createRegistry(): <T>(url: string, fn: () => Promise<T>) => Promise<T> {
+  const reg = new Map<string, ConcurrencyQueue>();
+  return function enqueueInRegistry<T>(url: string, fn: () => Promise<T>): Promise<T> {
+    const hostname = resolveHostname(url);
+    if (!reg.has(hostname)) {
+      const concurrency =
+        Object.entries(DOMAIN_CONCURRENCY).find(([d]) => hostname.endsWith(d))?.[1] ?? 2;
+      reg.set(hostname, new ConcurrencyQueue(concurrency));
+    }
+    return reg.get(hostname)!.add(fn);
+  };
 }
+
+export const enqueue = createRegistry();

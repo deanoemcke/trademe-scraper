@@ -1,5 +1,6 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import type { Recipe, Listing, ListingDetail, QuickSearchEvent, DeepSearchEvent } from './base';
+import { RECIPE_PATTERNS } from './metadata';
 import { enqueue } from '../queue';
 
 const USER_AGENT =
@@ -378,12 +379,14 @@ async function deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent)
 
 // ── Recipe ────────────────────────────────────────────────────────────────────
 
+const facebookPattern = RECIPE_PATTERNS.find(p => p.name === 'facebook')!;
+
 export const facebookRecipe: Recipe = {
-  name: 'facebook',
+  name: facebookPattern.name,
   matches(url: string): boolean {
     try {
       const { hostname, pathname } = new URL(url);
-      return hostname.endsWith('facebook.com') && pathname.includes('/marketplace/');
+      return hostname.endsWith(facebookPattern.hostname) && pathname.includes(facebookPattern.pathPrefix!);
     } catch {
       return false;
     }

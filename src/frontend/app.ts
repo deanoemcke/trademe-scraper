@@ -1,58 +1,32 @@
-import { matchesFilters, computeFilterReason, type FrontendFilters, type FilterReason } from '../lib/filters';
+import { computeFilterReason, type FrontendFilters } from '../lib/filters';
 import { canHandleUrl } from '../lib/recipes/matcher';
 import type { Listing, ListingDetail } from '../lib/recipes/base';
+import {
+  type ListingItem,
+  type UrlCardState,
+  type SavedSearch,
+  listingsByUrl,
+  urlCardStates,
+  cardIdByUrl,
+  currentSearchName,
+  showFilteredListings,
+  isDeepSearchRunning,
+  deepSearchId,
+  deepSearchCancellationRequested,
+  setCurrentSearchName,
+  setShowFilteredListings,
+  setIsDeepSearchRunning,
+  setDeepSearchId,
+  setDeepSearchCancellationRequested,
+} from './state';
 
-// ── State ─────────────────────────────────────────────────────────────────────
-
-interface SavedSearch {
-  id: string;
-  name: string;
-  urls: string[];
-  filters: FrontendFilters;
-  aiFilter: string | null;
-  createdAt: number;
-}
-
-interface ListingItem {
-  data: Listing;
-  deepSearched: boolean;
-  filterReason: FilterReason | null;
-  aiCheckedHash: number | null;
-  aiFilterReason: string | null;
-}
+// ── Utility ───────────────────────────────────────────────────────────────────
 
 function promptHash(s: string): number {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = (h * 33 ^ s.charCodeAt(i)) >>> 0;
   return h;
 }
-
-interface UrlCardState {
-  el: HTMLElement;
-  input: HTMLInputElement;
-  searchBtn: HTMLButtonElement;
-  removeBtn: HTMLButtonElement;
-  criteriaEl: HTMLElement;
-  countEl: HTMLElement;
-  cacheStatusEl: HTMLElement;
-  statusEl: HTMLElement;
-  searched: boolean;
-  searchedUrl: string;
-  searching: boolean;
-  searchId: string | null;
-  cancellationRequested: boolean;
-  listingUrls: string[];
-}
-
-let currentSearchName: string | null = null;
-let showFilteredListings = false;
-let isDeepSearchRunning = false;
-let deepSearchId: string | null = null;
-let deepSearchCancellationRequested = false;
-const listingsByUrl = new Map<string, ListingItem>();
-const urlCardStates: UrlCardState[] = [];
-
-// ── Utility ───────────────────────────────────────────────────────────────────
 
 function esc(s: string | number): string {
   return String(s)
@@ -147,7 +121,7 @@ function setDeepSearchingStatus(msg: string): void {
 
 function cancelDeepSearch(): void {
   if (!isDeepSearchRunning || deepSearchCancellationRequested) return;
-  deepSearchCancellationRequested = true;
+  setDeepSearchCancellationRequested(true);
   setDeepSearchingStatus('Cancelling…');
   fetch('/api/cancel-search', {
     method: 'POST',
@@ -173,7 +147,7 @@ function updateCardSearchBtn(state: UrlCardState): void {
 }
 
 function setDeepSearchBusy(busy: boolean): void {
-  isDeepSearchRunning = busy;
+  setIsDeepSearchRunning(busy);
   for (const state of urlCardStates) updateCardSearchBtn(state);
   renderDerived();
 }
@@ -222,7 +196,7 @@ function resetAllResults(): void {
   listingsByUrl.clear();
   el('listingsContainer').innerHTML = '';
   el('resultCount').textContent = '0';
-  showFilteredListings = false;
+  setShowFilteredListings(false);
   el<HTMLButtonElement>('toggleFilteredBtn').textContent = 'show';
   el('filteredCount').classList.add('hidden');
   el('resultsSection').classList.add('hidden');
@@ -278,8 +252,9 @@ function resetCardForResearch(state: UrlCardState): void {
   const otherUrls = new Set(urlCardStates.flatMap(s => s === state ? [] : s.listingUrls));
   for (const url of state.listingUrls) {
     if (!otherUrls.has(url)) {
-      document.getElementById(cardId(url))?.remove();
+      getCardByUrl(url)?.remove();
       listingsByUrl.delete(url);
+      cardIdByUrl.delete(url);
     }
   }
   state.listingUrls = [];
@@ -300,8 +275,9 @@ function removeUrlCard(state: UrlCardState): void {
   const otherUrls = new Set(urlCardStates.flatMap(s => s === state ? [] : s.listingUrls));
   for (const url of state.listingUrls) {
     if (!otherUrls.has(url)) {
-      document.getElementById(cardId(url))?.remove();
+      getCardByUrl(url)?.remove();
       listingsByUrl.delete(url);
+      cardIdByUrl.delete(url);
     }
   }
   state.el.remove();
@@ -346,9 +322,9 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
         totalFound++;
         state.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
-          const item: ListingItem = { data: listing, deepSearched: false, filterReason: null, aiCheckedHash: null, aiFilterReason: null };
+          const item: ListingItem = { data: listing, detail: null, deepSearched: false, filterReason: null, aiCheckedHash: null, aiFilterReason: null };
           listingsByUrl.set(listing.url, item);
-          renderCard(listing);
+          renderCard(item);
           renderDerived();
         }
       } else if (ev.type === 'error') {
@@ -411,7 +387,7 @@ function applyClientFilters(): void {
   for (const item of getOrderedListings()) {
     item.filterReason = computeFilterReason(item.data, filters);
     const passes = item.filterReason === null && item.aiFilterReason === null;
-    const card = document.getElementById(cardId(item.data.url));
+    const card = getCardByUrl(item.data.url);
     if (card) {
       const banner = card.querySelector<HTMLElement>('.filter-banner')!;
       if (passes) {
@@ -532,9 +508,10 @@ async function streamPost(
 
 // ── Card helpers ──────────────────────────────────────────────────────────────
 
-function cardId(url: string): string {
-  const numId = url.match(/\/(?:listing|item)\/(\d+)/)?.[1];
-  return 'card-' + (numId ?? url.replace(/[^a-zA-Z0-9]/g, '').slice(-20));
+// Looks up a listing card by URL. Returns null if not yet rendered.
+function getCardByUrl(url: string): HTMLElement | null {
+  const id = cardIdByUrl.get(url);
+  return id ? document.getElementById(id) : null;
 }
 
 function shippingBadge(fulfillment: Listing['fulfillment']): string {
@@ -560,82 +537,42 @@ function tidyDescription(text: string): string {
     .trim();
 }
 
-function renderCard(listing: Listing): void {
-  const id = cardId(listing.url);
-  const card = document.createElement('div');
-  card.className = 'listing-card';
-  card.id = id;
-  card.dataset.url = listing.url;
-  card.dataset.isAuction = String(listing.isAuction ?? false);
-
-  const thumb = listing.thumbnailUrl
-    ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
-    : `<div class="listing-thumb-placeholder">
-         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
-       </div>`;
-
-  card.innerHTML = `
-    <div class="filter-banner hidden"></div>
-    <div class="listing-card-content">
-      ${thumb}
-      <div class="listing-body">
-        <div class="listing-title">
-          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
-        </div>
-        <div class="listing-prices">
-          <span class="price">${esc(listing.priceDisplay)}</span>
-        </div>
-        <div class="listing-meta">
-          <span class="meta-text">📍 ${esc(listing.location)}</span>
-          ${shippingBadge(listing.fulfillment)}
-        </div>
-        <div class="listing-extras"></div>
-      </div>
-    </div>
-  `;
-  el('listingsContainer').appendChild(card);
+function buildPricesHtml(item: ListingItem): string {
+  let html = `<span class="price">${esc(item.data.priceDisplay)}</span>`;
+  if (item.detail && item.data.isAuction && item.detail.buyNowPrice != null) {
+    html += `<span class="price-buynow">Buy Now: <strong>$${Number(item.detail.buyNowPrice).toLocaleString()}</strong></span>`;
+  }
+  return html;
 }
 
-function enrichCard(url: string, detail: ListingDetail): void {
-  const card = document.getElementById(cardId(url));
-  if (!card) return;
-  card.classList.add('enriched');
-
-  const isAuction = card.dataset.isAuction === 'true';
-
-  const pricesEl = card.querySelector('.listing-prices')!;
-  let pricesHtml = `<span class="price">${pricesEl.querySelector('.price')!.innerHTML}</span>`;
-  if (isAuction && detail.buyNowPrice != null) {
-    pricesHtml += `<span class="price-buynow">Buy Now: <strong>$${Number(detail.buyNowPrice).toLocaleString()}</strong></span>`;
-  }
-  pricesEl.innerHTML = pricesHtml;
-
-  const metaEl = card.querySelector('.listing-meta')!;
-  let metaHtml = `<span class="meta-text">📍 ${metaEl.querySelector('.meta-text')!.textContent!.slice(2)}</span>`;
-  const { shippingAvailable, pickupAvailable } = detail;
-  const hasDefiniteData = shippingAvailable !== null || pickupAvailable !== null;
-  metaEl.querySelectorAll('.badge').forEach(b => {
-    const isDeliveryBadge = b.classList.contains('badge-pickuponly') ||
-                            b.classList.contains('badge-shipping') ||
-                            b.classList.contains('badge-both');
-    if (!isDeliveryBadge || !hasDefiniteData) metaHtml += b.outerHTML;
-  });
-  if (isAuction) {
-    const reserve = reserveText(detail.reserveStatus);
-    if (reserve) metaHtml += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
-  }
-  if (hasDefiniteData) {
-    if (shippingAvailable && pickupAvailable) {
-      metaHtml += '<span class="badge badge-both">Shipping &amp; pickup</span>';
-    } else if (shippingAvailable) {
-      metaHtml += '<span class="badge badge-shipping">Shipping only</span>';
-    } else if (pickupAvailable) {
-      metaHtml += '<span class="badge badge-pickuponly">Pickup only</span>';
+function buildMetaHtml(item: ListingItem): string {
+  let html = `<span class="meta-text">📍 ${esc(item.data.location)}</span>`;
+  const detail = item.detail;
+  if (detail) {
+    const { shippingAvailable, pickupAvailable } = detail;
+    const hasDefiniteData = shippingAvailable !== null || pickupAvailable !== null;
+    if (item.data.isAuction) {
+      const reserve = reserveText(detail.reserveStatus);
+      if (reserve) html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
     }
+    if (hasDefiniteData) {
+      if (shippingAvailable && pickupAvailable) {
+        html += '<span class="badge badge-both">Shipping &amp; pickup</span>';
+      } else if (shippingAvailable) {
+        html += '<span class="badge badge-shipping">Shipping only</span>';
+      } else if (pickupAvailable) {
+        html += '<span class="badge badge-pickuponly">Pickup only</span>';
+      }
+    } else {
+      html += shippingBadge(item.data.fulfillment);
+    }
+  } else {
+    html += shippingBadge(item.data.fulfillment);
   }
-  metaEl.innerHTML = metaHtml;
+  return html;
+}
 
-  const extras = card.querySelector('.listing-extras')!;
+function buildExtrasHtml(detail: ListingDetail): string {
   let body = '';
 
   // ── Details ───────────────────────────────────────────────────────────────
@@ -669,7 +606,51 @@ function enrichCard(url: string, detail: ListingDetail): void {
     body += `</div>`;
   }
 
-  extras.innerHTML = `<div class="extras-body collapsed">${body}<div class="extras-fade"></div></div><button class="extras-toggle" style="display:none">Show less</button>`;
+  return `<div class="extras-body collapsed">${body}<div class="extras-fade"></div></div><button class="extras-toggle" style="display:none">Show less</button>`;
+}
+
+function renderCard(item: ListingItem): void {
+  const listing = item.data;
+
+  // Assign a UUID-based id on first render; reuse it on re-renders (e.g. after deep search enrichment).
+  let id = cardIdByUrl.get(listing.url);
+  if (!id) {
+    id = 'card-' + crypto.randomUUID();
+    cardIdByUrl.set(listing.url, id);
+  }
+
+  const existing = document.getElementById(id);
+  const card = existing ?? document.createElement('div');
+  card.className = `listing-card${item.detail ? ' enriched' : ''}`;
+  card.id = id;
+  card.dataset.url = listing.url;
+
+  const thumb = listing.thumbnailUrl
+    ? `<img class="listing-thumb" src="${esc(listing.thumbnailUrl)}" alt="" loading="lazy">`
+    : `<div class="listing-thumb-placeholder">
+         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+       </div>`;
+
+  card.innerHTML = `
+    <div class="filter-banner hidden"></div>
+    <div class="listing-card-content">
+      ${thumb}
+      <div class="listing-body">
+        <div class="listing-title">
+          <a href="${esc(listing.url)}" target="_blank" rel="noopener">${esc(listing.title)}</a>
+        </div>
+        <div class="listing-prices">
+          ${buildPricesHtml(item)}
+        </div>
+        <div class="listing-meta">
+          ${buildMetaHtml(item)}
+        </div>
+        <div class="listing-extras">${item.detail ? buildExtrasHtml(item.detail) : ''}</div>
+      </div>
+    </div>
+  `;
+
+  if (!existing) el('listingsContainer').appendChild(card);
 }
 
 function expandExtras(body: HTMLElement): void {
@@ -707,14 +688,14 @@ async function runDeepSearch(): Promise<void> {
 
   if (toScrape.length === 0) return;
 
-  deepSearchId = crypto.randomUUID();
-  deepSearchCancellationRequested = false;
+  setDeepSearchId(crypto.randomUUID());
+  setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(true);
   let hiddenByDescription = 0;
   let detailsReceived = 0;
 
   for (const listing of toScrape) {
-    const card = document.getElementById(cardId(listing.url));
+    const card = getCardByUrl(listing.url);
     if (card) {
       card.querySelector('.listing-extras')!.innerHTML =
         '<div style="padding-top:0.6rem">' +
@@ -735,13 +716,18 @@ async function runDeepSearch(): Promise<void> {
         const item = listingsByUrl.get(ev.url as string);
         if (item) {
           item.deepSearched = true;
+          item.detail = detail;
           item.data.description = detail.description;
+          if (detail.shippingAvailable !== null && detail.pickupAvailable !== null) {
+            item.data.fulfillment = {
+              shippingAvailable: detail.shippingAvailable,
+              pickupAvailable: detail.pickupAvailable,
+            };
+          }
           item.aiCheckedHash = null;
-        }
-        enrichCard(ev.url as string, detail);
+          renderCard(item);
 
-        if (item) {
-          const card = document.getElementById(cardId(item.data.url));
+          const card = getCardByUrl(item.data.url);
           const wasVisible = card !== null && card.style.display !== 'none';
           item.filterReason = computeFilterReason(item.data, getFilters());
           if (wasVisible && item.filterReason !== null) {
@@ -773,7 +759,7 @@ async function runDeepSearch(): Promise<void> {
   for (const listing of toScrape) {
     const item = listingsByUrl.get(listing.url);
     if (item && !item.deepSearched) {
-      const card = document.getElementById(cardId(listing.url));
+      const card = getCardByUrl(listing.url);
       if (card) card.querySelector('.listing-extras')!.innerHTML = '';
     }
   }
@@ -782,8 +768,8 @@ async function runDeepSearch(): Promise<void> {
     setStatus(`Cancelled — ${detailsReceived}/${toScrape.length} detail${toScrape.length !== 1 ? 's' : ''} loaded`, 'error');
   }
 
-  deepSearchId = null;
-  deepSearchCancellationRequested = false;
+  setDeepSearchId(null);
+  setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(false);
   applyClientFilters();
 }
@@ -793,7 +779,7 @@ function markDirty(): void {
 }
 
 function setSearchName(name: string | null): void {
-  currentSearchName = name;
+  setCurrentSearchName(name);
   el('searchTitle').textContent = name ?? 'new shiny thing';
   el('saveCurrentBtn').classList.add('hidden');
 }
@@ -895,11 +881,11 @@ el('addUrlBtn').addEventListener('click', () => {
 el<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearch());
 
 el('toggleFilteredBtn').addEventListener('click', () => {
-  showFilteredListings = !showFilteredListings;
+  setShowFilteredListings(!showFilteredListings);
   el<HTMLButtonElement>('toggleFilteredBtn').textContent = showFilteredListings ? 'hide' : 'show';
   for (const item of getOrderedListings()) {
     if (item.filterReason !== null || item.aiFilterReason !== null) {
-      const card = document.getElementById(cardId(item.data.url));
+      const card = getCardByUrl(item.data.url);
       if (card) card.style.display = showFilteredListings ? '' : 'none';
     }
   }
