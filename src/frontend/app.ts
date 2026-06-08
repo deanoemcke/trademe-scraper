@@ -1,59 +1,31 @@
-import { matchesFilters, computeFilterReason, type FrontendFilters, type FilterReason } from '../lib/filters';
+import { computeFilterReason, type FrontendFilters } from '../lib/filters';
 import { canHandleUrl } from '../lib/recipes/matcher';
 import type { Listing, ListingDetail } from '../lib/recipes/base';
+import {
+  type ListingItem,
+  type UrlCardState,
+  type SavedSearch,
+  listingsByUrl,
+  urlCardStates,
+  currentSearchName,
+  showFilteredListings,
+  isDeepSearchRunning,
+  deepSearchId,
+  deepSearchCancellationRequested,
+  setCurrentSearchName,
+  setShowFilteredListings,
+  setIsDeepSearchRunning,
+  setDeepSearchId,
+  setDeepSearchCancellationRequested,
+} from './state';
 
-// ── State ─────────────────────────────────────────────────────────────────────
-
-interface SavedSearch {
-  id: string;
-  name: string;
-  urls: string[];
-  filters: FrontendFilters;
-  aiFilter: string | null;
-  createdAt: number;
-}
-
-interface ListingItem {
-  data: Listing;
-  detail: ListingDetail | null;
-  deepSearched: boolean;
-  filterReason: FilterReason | null;
-  aiCheckedHash: number | null;
-  aiFilterReason: string | null;
-}
+// ── Utility ───────────────────────────────────────────────────────────────────
 
 function promptHash(s: string): number {
   let h = 5381;
   for (let i = 0; i < s.length; i++) h = (h * 33 ^ s.charCodeAt(i)) >>> 0;
   return h;
 }
-
-interface UrlCardState {
-  el: HTMLElement;
-  input: HTMLInputElement;
-  searchBtn: HTMLButtonElement;
-  removeBtn: HTMLButtonElement;
-  criteriaEl: HTMLElement;
-  countEl: HTMLElement;
-  cacheStatusEl: HTMLElement;
-  statusEl: HTMLElement;
-  searched: boolean;
-  searchedUrl: string;
-  searching: boolean;
-  searchId: string | null;
-  cancellationRequested: boolean;
-  listingUrls: string[];
-}
-
-let currentSearchName: string | null = null;
-let showFilteredListings = false;
-let isDeepSearchRunning = false;
-let deepSearchId: string | null = null;
-let deepSearchCancellationRequested = false;
-const listingsByUrl = new Map<string, ListingItem>();
-const urlCardStates: UrlCardState[] = [];
-
-// ── Utility ───────────────────────────────────────────────────────────────────
 
 function esc(s: string | number): string {
   return String(s)
@@ -148,7 +120,7 @@ function setDeepSearchingStatus(msg: string): void {
 
 function cancelDeepSearch(): void {
   if (!isDeepSearchRunning || deepSearchCancellationRequested) return;
-  deepSearchCancellationRequested = true;
+  setDeepSearchCancellationRequested(true);
   setDeepSearchingStatus('Cancelling…');
   fetch('/api/cancel-search', {
     method: 'POST',
@@ -174,7 +146,7 @@ function updateCardSearchBtn(state: UrlCardState): void {
 }
 
 function setDeepSearchBusy(busy: boolean): void {
-  isDeepSearchRunning = busy;
+  setIsDeepSearchRunning(busy);
   for (const state of urlCardStates) updateCardSearchBtn(state);
   renderDerived();
 }
@@ -223,7 +195,7 @@ function resetAllResults(): void {
   listingsByUrl.clear();
   el('listingsContainer').innerHTML = '';
   el('resultCount').textContent = '0';
-  showFilteredListings = false;
+  setShowFilteredListings(false);
   el<HTMLButtonElement>('toggleFilteredBtn').textContent = 'show';
   el('filteredCount').classList.add('hidden');
   el('resultsSection').classList.add('hidden');
@@ -706,8 +678,8 @@ async function runDeepSearch(): Promise<void> {
 
   if (toScrape.length === 0) return;
 
-  deepSearchId = crypto.randomUUID();
-  deepSearchCancellationRequested = false;
+  setDeepSearchId(crypto.randomUUID());
+  setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(true);
   let hiddenByDescription = 0;
   let detailsReceived = 0;
@@ -786,8 +758,8 @@ async function runDeepSearch(): Promise<void> {
     setStatus(`Cancelled — ${detailsReceived}/${toScrape.length} detail${toScrape.length !== 1 ? 's' : ''} loaded`, 'error');
   }
 
-  deepSearchId = null;
-  deepSearchCancellationRequested = false;
+  setDeepSearchId(null);
+  setDeepSearchCancellationRequested(false);
   setDeepSearchBusy(false);
   applyClientFilters();
 }
@@ -797,7 +769,7 @@ function markDirty(): void {
 }
 
 function setSearchName(name: string | null): void {
-  currentSearchName = name;
+  setCurrentSearchName(name);
   el('searchTitle').textContent = name ?? 'new shiny thing';
   el('saveCurrentBtn').classList.add('hidden');
 }
@@ -899,7 +871,7 @@ el('addUrlBtn').addEventListener('click', () => {
 el<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearch());
 
 el('toggleFilteredBtn').addEventListener('click', () => {
-  showFilteredListings = !showFilteredListings;
+  setShowFilteredListings(!showFilteredListings);
   el<HTMLButtonElement>('toggleFilteredBtn').textContent = showFilteredListings ? 'hide' : 'show';
   for (const item of getOrderedListings()) {
     if (item.filterReason !== null || item.aiFilterReason !== null) {
