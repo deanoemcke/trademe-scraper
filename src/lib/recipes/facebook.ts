@@ -7,34 +7,34 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const FACEBOOK_BASE = 'https://www.facebook.com';
 
-const facebookPattern = RECIPE_PATTERNS.find(p => p.name === 'facebook')!;
+const FACEBOOK_PATTERN = RECIPE_PATTERNS.find(p => p.name === 'facebook')!;
 
 // ── Implicit filter extraction ────────────────────────────────────────────────
 
 export function extractImplicitFilters(urlStr: string): Array<[string, string]> {
   try {
     const url = new URL(urlStr);
-    const rows: Array<[string, string]> = [];
+    const filterRows: Array<[string, string]> = [];
 
     const query = url.searchParams.get('query');
-    if (query) rows.push(['Search', `"${query}"`]);
+    if (query) filterRows.push(['Search', `"${query}"`]);
 
     const minPrice = url.searchParams.get('minPrice');
     const maxPrice = url.searchParams.get('maxPrice');
-    if (minPrice && maxPrice) rows.push(['Price', `$${minPrice} – $${maxPrice}`]);
-    else if (minPrice) rows.push(['Min Price', `$${minPrice}`]);
-    else if (maxPrice) rows.push(['Max Price', `$${maxPrice}`]);
+    if (minPrice && maxPrice) filterRows.push(['Price', `$${minPrice} – $${maxPrice}`]);
+    else if (minPrice) filterRows.push(['Min Price', `$${minPrice}`]);
+    else if (maxPrice) filterRows.push(['Max Price', `$${maxPrice}`]);
 
     const condition = url.searchParams.get('itemCondition');
-    if (condition) rows.push(['Condition', condition]);
+    if (condition) filterRows.push(['Condition', condition]);
 
     const daysSinceListed = url.searchParams.get('daysSinceListed');
-    if (daysSinceListed) rows.push(['Listed within', `${daysSinceListed} days`]);
+    if (daysSinceListed) filterRows.push(['Listed within', `${daysSinceListed} days`]);
 
     const sortBy = url.searchParams.get('sortBy');
-    if (sortBy) rows.push(['Sort', sortBy]);
+    if (sortBy) filterRows.push(['Sort', sortBy]);
 
-    return rows;
+    return filterRows;
   } catch {
     return [];
   }
@@ -52,20 +52,20 @@ async function createContext(): Promise<{ browser: Browser; context: BrowserCont
   if (cookiesJson) {
     try {
       const raw = JSON.parse(cookiesJson) as Array<Record<string, unknown>>;
-      await context.addCookies(raw.map(c => ({
-        name: String(c.name),
-        value: String(c.value),
-        domain: String(c.domain ?? '.facebook.com'),
-        path: String(c.path ?? '/'),
-        secure: Boolean(c.secure),
-        httpOnly: Boolean(c.httpOnly),
-        sameSite: (['Strict', 'Lax', 'None'].includes(String(c.sameSite)) ? c.sameSite : 'Lax') as 'Strict' | 'Lax' | 'None',
-        ...(typeof c.expirationDate === 'number' ? { expires: c.expirationDate } :
-            typeof c.expires === 'number' ? { expires: c.expires } : {}),
+      await context.addCookies(raw.map(cookie => ({
+        name: String(cookie.name),
+        value: String(cookie.value),
+        domain: String(cookie.domain ?? '.facebook.com'),
+        path: String(cookie.path ?? '/'),
+        secure: Boolean(cookie.secure),
+        httpOnly: Boolean(cookie.httpOnly),
+        sameSite: (['Strict', 'Lax', 'None'].includes(String(cookie.sameSite)) ? cookie.sameSite : 'Lax') as 'Strict' | 'Lax' | 'None',
+        ...(typeof cookie.expirationDate === 'number' ? { expires: cookie.expirationDate } :
+            typeof cookie.expires === 'number' ? { expires: cookie.expires } : {}),
       })));
       console.log(`[facebook] loaded ${raw.length} cookies from FB_COOKIES`);
-    } catch (err) {
-      console.log('[facebook] Failed to parse FB_COOKIES:', err);
+    } catch (error) {
+      console.log('[facebook] Failed to parse FB_COOKIES:', error);
     }
   }
 
@@ -82,11 +82,11 @@ async function maskHeadless(page: Page): Promise<void> {
 
 // ── Listing extraction via MutationObserver ───────────────────────────────────
 
-export const PRICE_RE = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
+export const PRICE_REGEX = /^(?:[A-Z]{0,3}\$)[\d,]+(?:\.\d{2})?$|^Free$/;
 
 export function parseFacebookPriceLines(innerText: string): { price: number | null; priceDisplay: string; lines: string[] } {
-  const lines = innerText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  const priceLines = lines.filter(l => PRICE_RE.test(l));
+  const lines = innerText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+  const priceLines = lines.filter(line => PRICE_REGEX.test(line));
   const priceDisplay = priceLines.length === 0 ? 'Price on request' : priceLines[0];
   const priceMatch = priceLines[0]?.replace(/,/g, '').match(/[\d.]+/);
   const parsed = priceMatch ? parseFloat(priceMatch[0]) : NaN;
@@ -102,7 +102,7 @@ export function buildFacebookListing(
   priceDisplay: string,
   location: string,
 ): Listing {
-  return { source: facebookPattern.name, title, price, priceDisplay, location, url, thumbnailUrl, isAuction: false };
+  return { source: FACEBOOK_PATTERN.name, title, price, priceDisplay, location, url, thumbnailUrl, isAuction: false };
 }
 
 // Called from browser-side MutationObserver via page.exposeFunction.
@@ -129,7 +129,7 @@ function processRawListing(
   }
   if (!title) {
     location = innerLines[innerLines.length - 1] ?? 'Unknown';
-    title    = innerLines.find(l => !PRICE_RE.test(l) && l !== location) ?? '';
+    title    = innerLines.find(line => !PRICE_REGEX.test(line) && line !== location) ?? '';
   }
   if (!title) return;
 
@@ -139,14 +139,14 @@ function processRawListing(
 
 // ── Quick search ──────────────────────────────────────────────────────────────
 
-async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent) => void, isCancelled?: () => boolean): Promise<void> {
+async function quickSearchAsync(searchUrl: string, onEvent: (event: QuickSearchEvent) => void, isCancelled?: () => boolean): Promise<void> {
   onEvent({ type: 'criteria', filters: extractImplicitFilters(searchUrl) });
 
   let browser: Browser | undefined;
   try {
-    const ctx = await createContext();
-    browser = ctx.browser;
-    const page = await ctx.context.newPage();
+    const browserSetup = await createContext();
+    browser = browserSetup.browser;
+    const page = await browserSetup.context.newPage();
     await maskHeadless(page);
 
     const seen = new Set<string>();
@@ -212,9 +212,9 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
         for (const mutation of mutations) {
           for (const node of mutation.addedNodes) {
             if (node.nodeType !== 1) continue;
-            const el = node as Element;
-            if (el.matches('a[href*="/marketplace/item/"]')) processLink(el);
-            el.querySelectorAll('a[href*="/marketplace/item/"]').forEach(processLink);
+            const addedElement = node as Element;
+            if (addedElement.matches('a[href*="/marketplace/item/"]')) processLink(addedElement);
+            addedElement.querySelectorAll('a[href*="/marketplace/item/"]').forEach(processLink);
           }
         }
       }).observe(document.body, { childList: true, subtree: true });
@@ -270,9 +270,9 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
 
     console.log(`[facebook] complete — ${counter.total} listings emitted`);
     onEvent({ type: 'complete' });
-  } catch (err) {
-    console.log(`[facebook] error:`, err);
-    onEvent({ type: 'error', message: (err as Error).message });
+  } catch (error) {
+    console.log(`[facebook] error:`, error);
+    onEvent({ type: 'error', message: (error as Error).message });
   } finally {
     await browser?.close();
   }
@@ -280,7 +280,7 @@ async function quickSearch(searchUrl: string, onEvent: (event: QuickSearchEvent)
 
 // ── Detail extraction ─────────────────────────────────────────────────────────
 
-export function extractFBDescription(bodyText: string): string {
+export function extractFacebookDescription(bodyText: string): string {
   // Description sits after the Details section's key-value pairs and before "See more"
   const detailsIdx = bodyText.indexOf('\nDetails\n');
   if (detailsIdx === -1) return '';
@@ -293,32 +293,32 @@ export function extractFBDescription(bodyText: string): string {
   if (approxIdx !== -1) end = Math.min(end, approxIdx);
 
   const lines = afterDetails.slice(0, end)
-    .split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    .split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
   // Skip leading detail key-value pairs (short lines, no sentence-ending punctuation)
-  let i = 0;
-  while (i < lines.length && lines[i].length < 30 && !/[.!?]/.test(lines[i])) i++;
+  let lineIndex = 0;
+  while (lineIndex < lines.length && lines[lineIndex].length < 30 && !/[.!?]/.test(lines[lineIndex])) lineIndex++;
 
-  return lines.slice(i).join('\n').trim();
+  return lines.slice(lineIndex).join('\n').trim();
 }
 
-export function extractFBDetails(bodyText: string): Array<{ key: string; value: string }> {
+export function extractFacebookDetails(bodyText: string): Array<{ key: string; value: string }> {
   const details: Array<{ key: string; value: string }> = [];
   const detailsIdx = bodyText.indexOf('\nDetails\n');
   if (detailsIdx === -1) return [];
 
   const lines = bodyText
     .slice(detailsIdx + '\nDetails\n'.length)
-    .split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    .split('\n').map(line => line.trim()).filter(line => line.length > 0);
 
-  let i = 0;
-  while (i + 1 < lines.length) {
-    const key = lines[i];
-    const val = lines[i + 1];
+  let lineIndex = 0;
+  while (lineIndex + 1 < lines.length) {
+    const key = lines[lineIndex];
+    const currentValue = lines[lineIndex + 1];
     // A detail pair: key is short/simple, value is short/simple (not prose)
-    if (key.length < 30 && !/[.!?]/.test(key) && val.length < 60 && !/[.!?]{2}/.test(val)) {
-      details.push({ key, value: val });
-      i += 2;
+    if (key.length < 30 && !/[.!?]/.test(key) && currentValue.length < 60 && !/[.!?]{2}/.test(currentValue)) {
+      details.push({ key, value: currentValue });
+      lineIndex += 2;
     } else {
       break;
     }
@@ -327,7 +327,7 @@ export function extractFBDetails(bodyText: string): Array<{ key: string; value: 
   return details;
 }
 
-async function fetchFBListingDetail(page: Page, url: string): Promise<ListingDetail> {
+async function fetchFacebookListingDetailAsync(page: Page, url: string): Promise<ListingDetail> {
   console.log(`[facebook] fetching: ${url}`);
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await page.waitForTimeout(3000);
@@ -345,8 +345,8 @@ async function fetchFBListingDetail(page: Page, url: string): Promise<ListingDet
   const priceMatch = bodyText.match(/(?:[A-Z]{0,3}\$)([\d,]+(?:\.\d{2})?)/);
   const buyNowPrice = priceMatch ? parseFloat(priceMatch[1].replace(/,/g, '')) : null;
 
-  const details = extractFBDetails(bodyText);
-  const description = extractFBDescription(bodyText);
+  const details = extractFacebookDetails(bodyText);
+  const description = extractFacebookDescription(bodyText);
 
   const locationMatch = bodyText.match(/Listed in ([^\n·]+)/);
   const pickupLocation = locationMatch?.[1]?.trim() ?? '';
@@ -365,31 +365,31 @@ async function fetchFBListingDetail(page: Page, url: string): Promise<ListingDet
 
 // ── Deep search ───────────────────────────────────────────────────────────────
 
-async function deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent) => void, isCancelled?: () => boolean): Promise<void> {
+async function deepSearchAsync(listings: Listing[], onEvent: (event: DeepSearchEvent) => void, isCancelled?: () => boolean): Promise<void> {
   let browser: Browser | undefined;
   try {
-    const ctx = await createContext();
-    browser = ctx.browser;
+    const browserSetup = await createContext();
+    browser = browserSetup.browser;
 
     await Promise.all(
-      listings.map((listing, i) =>
+      listings.map((listing, listingIndex) =>
         enqueue(listing.url, async () => {
-          const pg = await ctx.context.newPage();
-          if (isCancelled?.()) { await pg.close(); return; }
-          await maskHeadless(pg);
+          const currentPage = await browserSetup.context.newPage();
+          if (isCancelled?.()) { await currentPage.close(); return; }
+          await maskHeadless(currentPage);
           try {
-            onEvent({ type: 'progress', index: i + 1, total: listings.length, title: listing.title });
-            const detail = await fetchFBListingDetail(pg, listing.url);
+            onEvent({ type: 'progress', index: listingIndex + 1, total: listings.length, title: listing.title });
+            const detail = await fetchFacebookListingDetailAsync(currentPage, listing.url);
             onEvent({ type: 'detail', url: listing.url, detail });
           } finally {
-            await pg.close();
+            await currentPage.close();
           }
         })
       )
     );
     onEvent({ type: 'complete' });
-  } catch (err) {
-    onEvent({ type: 'error', message: (err as Error).message });
+  } catch (error) {
+    onEvent({ type: 'error', message: (error as Error).message });
   } finally {
     await browser?.close();
   }
@@ -398,16 +398,16 @@ async function deepSearch(listings: Listing[], onEvent: (event: DeepSearchEvent)
 // ── Recipe ────────────────────────────────────────────────────────────────────
 
 export const facebookRecipe: Recipe = {
-  name: facebookPattern.name,
+  name: FACEBOOK_PATTERN.name,
   matches(url: string): boolean {
     try {
       const { hostname, pathname } = new URL(url);
-      return hostname.endsWith(facebookPattern.hostname) && pathname.includes(facebookPattern.pathPrefix!);
+      return hostname.endsWith(FACEBOOK_PATTERN.hostname) && pathname.includes(FACEBOOK_PATTERN.pathPrefix!);
     } catch {
       return false;
     }
   },
   extractImplicitFilters,
-  quickSearch,
-  deepSearch,
+  quickSearchAsync,
+  deepSearchAsync,
 };

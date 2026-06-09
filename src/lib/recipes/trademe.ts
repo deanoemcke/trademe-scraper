@@ -8,24 +8,24 @@ const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 const TRADEME_BASE = 'https://www.trademe.co.nz/a';
 
-const trademePattern = RECIPE_PATTERNS.find(p => p.name === 'trademe')!;
+const TRADEME_PATTERN = RECIPE_PATTERNS.find(p => p.name === 'trademe')!;
 
 type ApiItem = Record<string, unknown>;
 
 // ── Implicit filter extraction ────────────────────────────────────────────────
 
-const KNOWN_PARAMS: Record<string, string> = {
+const DISPLAY_NAME_BY_PARAM_KEY: Record<string, string> = {
   search_string: 'Search',
   condition: 'Condition',
   sort_order: 'Sort',
 };
 
-const PANEL_LABELS: Record<string, string> = {
+const LABEL_BY_PANEL_HASH: Record<string, string> = {
   '5c34c1efa0ac468f91e15161d549c479': 'RAM',
   '7a2bb94c0cb44806ac995a4fc854bcbc': 'Screen Size',
 };
 
-const IGNORED_PARAMS = new Set([
+const IGNORED_PARAM_KEYS = new Set([
   'rows', 'page', 'return_canonical', 'return_metadata', 'return_ads',
   'return_empty_categories', 'return_super_features', 'return_did_you_mean',
   'return_variants', 'snap_parameters', 'preferred_shipping_location',
@@ -35,15 +35,15 @@ const IGNORED_PARAMS = new Set([
 export function extractImplicitFilters(urlStr: string): Array<[string, string]> {
   try {
     const url = new URL(urlStr);
-    const rows: Array<[string, string]> = [];
+    const filterRows: Array<[string, string]> = [];
 
     const pathMatch = url.pathname.match(/\/a\/(.+?)\/search/);
     if (pathMatch) {
       const cat = pathMatch[1]
         .split('/')
-        .map(s => s.split('-').map(w => w[0].toUpperCase() + w.slice(1)).join(' '))
+        .map(pathSegment => pathSegment.split('-').map(word => word[0].toUpperCase() + word.slice(1)).join(' '))
         .join(' › ');
-      rows.push(['Category', cat]);
+      filterRows.push(['Category', cat]);
     }
 
     const grouped: Record<string, string[]> = {};
@@ -52,33 +52,33 @@ export function extractImplicitFilters(urlStr: string): Array<[string, string]> 
     }
 
     for (const [key, vals] of Object.entries(grouped)) {
-      if (IGNORED_PARAMS.has(key)) continue;
+      if (IGNORED_PARAM_KEYS.has(key)) continue;
 
-      if (key in KNOWN_PARAMS) {
-        let val = vals.join(', ');
-        if (key === 'condition') val = val[0].toUpperCase() + val.slice(1);
-        if (key === 'search_string') val = `"${val}"`;
-        rows.push([KNOWN_PARAMS[key], val]);
+      if (key in DISPLAY_NAME_BY_PARAM_KEY) {
+        let filterValue = vals.join(', ');
+        if (key === 'condition') filterValue = filterValue[0].toUpperCase() + filterValue.slice(1);
+        if (key === 'search_string') filterValue = `"${filterValue}"`;
+        filterRows.push([DISPLAY_NAME_BY_PARAM_KEY[key], filterValue]);
         continue;
       }
 
       if (key.startsWith('RefinePanel')) {
         const hash = key.replace('RefinePanel', '');
-        let label = PANEL_LABELS[hash];
+        let label = LABEL_BY_PANEL_HASH[hash];
         if (!label) {
-          if (vals.some(v => v.toLowerCase().includes('gb'))) label = 'RAM';
-          else if (vals.some(v => v.includes('"'))) label = 'Screen Size';
+          if (vals.some(paramValue => paramValue.toLowerCase().includes('gb'))) label = 'RAM';
+          else if (vals.some(paramValue => paramValue.includes('"'))) label = 'Screen Size';
           else label = 'Filter';
         }
-        rows.push([label, vals.join(', ')]);
+        filterRows.push([label, vals.join(', ')]);
         continue;
       }
 
-      const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-      rows.push([label, vals.join(', ')]);
+      const label = key.replace(/_/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+      filterRows.push([label, vals.join(', ')]);
     }
 
-    return rows;
+    return filterRows;
   } catch {
     return [];
   }
@@ -122,7 +122,7 @@ export function buildListing(raw: RawApiItem): Listing | null {
   const url = raw.canonicalPath ? `${TRADEME_BASE}${raw.canonicalPath}` : '';
   if (!raw.title || !url) return null;
   return {
-    source: trademePattern.name,
+    source: TRADEME_PATTERN.name,
     title: raw.title,
     price: parsePriceValue(display),
     priceDisplay: display,
@@ -136,11 +136,11 @@ export function buildListing(raw: RawApiItem): Listing | null {
 
 export function parseFrendState(state: Record<string, unknown>): { listings: Listing[]; totalCount: number; pageSize: number } | null {
   for (const value of Object.values(state)) {
-    const b = (value as Record<string, unknown>)?.b as Record<string, unknown> | undefined;
-    if (!b || !Array.isArray(b.list)) continue;
-    const items = b.list as ApiItem[];
-    const totalCount = (b.totalCount as number) ?? 0;
-    const pageSize = (b.pageSize as number) || (items.length || 1);
+    const bundleData = (value as Record<string, unknown>)?.b as Record<string, unknown> | undefined;
+    if (!bundleData || !Array.isArray(bundleData.list)) continue;
+    const items = bundleData.list as ApiItem[];
+    const totalCount = (bundleData.totalCount as number) ?? 0;
+    const pageSize = (bundleData.pageSize as number) || (items.length || 1);
     const listings = items
       .map((item): RawApiItem => ({
         title: (item.title as string) ?? '',
@@ -152,7 +152,7 @@ export function parseFrendState(state: Record<string, unknown>): { listings: Lis
         allowsPickups: item.allowsPickups as number | undefined,
       }))
       .map(buildListing)
-      .filter((l): l is Listing => l !== null);
+      .filter((listing): listing is Listing => listing !== null);
     if (listings.length > 0) return { listings, totalCount, pageSize };
   }
   return null;
@@ -173,7 +173,7 @@ export function parseSearchApiResponse(data: Record<string, unknown>): { listing
       allowsPickups: item.AllowsPickups as number | undefined,
     }))
     .map(buildListing)
-    .filter((l): l is Listing => l !== null);
+    .filter((listing): listing is Listing => listing !== null);
   return { listings, totalCount, pageSize };
 }
 
@@ -187,10 +187,10 @@ export function extractQuestionsAndAnswers(bodyText: string): Array<{ question: 
   let after = bodyText.slice(lineEnd + 1).trimStart();
   if (after.startsWith('Ask a question\n')) after = after.slice('Ask a question\n'.length).trimStart();
   const afterLower = after.toLowerCase();
-  const ends = ['ask a question', 'about the seller', 'about the store', "seller's other listings", 'similar listings', 'you might also like', 'back to top'];
+  const sectionEndMarkers = ['ask a question', 'about the seller', 'about the store', "seller's other listings", 'similar listings', 'you might also like', 'back to top'];
   let end = after.length;
-  for (const e of ends) {
-    const idx = afterLower.indexOf(e);
+  for (const sectionEndMarker of sectionEndMarkers) {
+    const idx = afterLower.indexOf(sectionEndMarker);
     if (idx !== -1 && idx < end) end = idx;
   }
   const content = after.slice(0, end).trim();
@@ -199,16 +199,16 @@ export function extractQuestionsAndAnswers(bodyText: string): Array<{ question: 
   const lines = content.split('\n');
   const segments: string[] = [];
   const current: string[] = [];
-  let i = 0;
+  let lineIndex = 0;
   let foundAnyUsernames = false;
-  while (i < lines.length) {
-    if (i + 1 < lines.length && /\(\d+$/.test(lines[i].trim()) && lines[i + 1].trim().startsWith(') •')) {
+  while (lineIndex < lines.length) {
+    if (lineIndex + 1 < lines.length && /\(\d+$/.test(lines[lineIndex].trim()) && lines[lineIndex + 1].trim().startsWith(') •')) {
       foundAnyUsernames = true;
       segments.push(current.splice(0).join('\n').trim());
-      i += 2;
+      lineIndex += 2;
     } else {
-      current.push(lines[i]);
-      i++;
+      current.push(lines[lineIndex]);
+      lineIndex++;
     }
   }
   if (current.length) segments.push(current.join('\n').trim());
@@ -216,9 +216,9 @@ export function extractQuestionsAndAnswers(bodyText: string): Array<{ question: 
   if (!foundAnyUsernames) return [];
 
   const pairs: Array<{ question: string; answer: string }> = [];
-  for (let j = 0; j < segments.length; j += 2) {
-    const question = segments[j].trim();
-    const answer = segments[j + 1]?.trim() ?? '';
+  for (let segmentIndex = 0; segmentIndex < segments.length; segmentIndex += 2) {
+    const question = segments[segmentIndex].trim();
+    const answer = segments[segmentIndex + 1]?.trim() ?? '';
     if (question) pairs.push({ question, answer });
   }
   return pairs;
@@ -228,16 +228,16 @@ export function extractDetails(bodyText: string): Array<{ key: string; value: st
   const detailsStart = bodyText.indexOf('Details\n');
   if (detailsStart === -1) return [];
   const after = bodyText.slice(detailsStart + 'Details\n'.length);
-  const ends = ['Description\n', 'Shipping & pick-up options'];
+  const sectionEndMarkers = ['Description\n', 'Shipping & pick-up options'];
   let end = after.length;
-  for (const e of ends) {
-    const idx = after.indexOf(e);
+  for (const sectionEndMarker of sectionEndMarkers) {
+    const idx = after.indexOf(sectionEndMarker);
     if (idx !== -1 && idx < end) end = idx;
   }
-  const lines = after.slice(0, end).split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = after.slice(0, end).split('\n').map(line => line.trim()).filter(Boolean);
   const pairs: Array<{ key: string; value: string }> = [];
-  for (let i = 0; i + 1 < lines.length; i += 2) {
-    pairs.push({ key: lines[i].replace(/:$/, ''), value: lines[i + 1] });
+  for (let lineIndex = 0; lineIndex + 1 < lines.length; lineIndex += 2) {
+    pairs.push({ key: lines[lineIndex].replace(/:$/, ''), value: lines[lineIndex + 1] });
   }
   return pairs;
 }
@@ -248,10 +248,10 @@ export function extractDescriptionFromText(bodyText: string): string {
   if (start === -1) return '';
   const after = bodyText.slice(start + marker.length).trimStart();
   const afterLower = after.toLowerCase();
-  const ends = ['\ndetails\n', 'shipping & pick-up options', 'questions & answers', "seller's other listings", 'similar listings', 'you might also like'];
+  const sectionEndMarkers = ['\ndetails\n', 'shipping & pick-up options', 'questions & answers', "seller's other listings", 'similar listings', 'you might also like'];
   let end = after.length;
-  for (const e of ends) {
-    const idx = afterLower.indexOf(e);
+  for (const sectionEndMarker of sectionEndMarkers) {
+    const idx = afterLower.indexOf(sectionEndMarker);
     if (idx !== -1 && idx < end) end = idx;
   }
   return after.slice(0, end).replace(/\s*\nShow more\s*$/, '').trim();
@@ -307,7 +307,7 @@ function extractFromGraphQL(json: any): Partial<ListingDetail> {
 
 // ── Playwright helpers ────────────────────────────────────────────────────────
 
-function waitForSearchApiResponse(page: Page): Promise<{ listings: Listing[]; totalCount: number; pageSize: number }> {
+function waitForSearchApiResponseAsync(page: Page): Promise<{ listings: Listing[]; totalCount: number; pageSize: number }> {
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout>;
     const handler = async (response: Response) => {
@@ -330,7 +330,7 @@ function waitForSearchApiResponse(page: Page): Promise<{ listings: Listing[]; to
   });
 }
 
-export async function fetchSingleListingDetail(page: Page, url: string): Promise<ListingDetail> {
+export async function fetchSingleListingDetailAsync(page: Page, url: string): Promise<ListingDetail> {
   let graphqlResult: Partial<ListingDetail> = {};
 
   const handler = async (response: Response) => {
@@ -376,7 +376,7 @@ export async function fetchSingleListingDetail(page: Page, url: string): Promise
 
 // ── Recipe implementation ─────────────────────────────────────────────────────
 
-async function quickSearch(
+async function quickSearchAsync(
   searchUrl: string,
   onEvent: (event: QuickSearchEvent) => void,
   isCancelled?: () => boolean
@@ -389,7 +389,7 @@ async function quickSearch(
     const page = await context.newPage();
 
     onEvent({ type: 'progress', message: 'Fetching page 1…' });
-    const p1Promise = waitForSearchApiResponse(page);
+    const p1Promise = waitForSearchApiResponseAsync(page);
     await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
     let p1Listings: Listing[] = [];
@@ -417,33 +417,33 @@ async function quickSearch(
 
     const seenUrls = new Set<string>();
     const emit = (listings: Listing[]) => {
-      for (const l of listings) {
-        if (seenUrls.has(l.url)) continue;
-        seenUrls.add(l.url);
-        onEvent({ type: 'listing', data: l });
+      for (const listing of listings) {
+        if (seenUrls.has(listing.url)) continue;
+        seenUrls.add(listing.url);
+        onEvent({ type: 'listing', data: listing });
       }
     };
 
     emit(p1Listings);
 
-    const pageNums = Array.from({ length: totalPages - 1 }, (_, i) => i + 2);
+    const pageNums = Array.from({ length: totalPages - 1 }, (_, pageIndex) => pageIndex + 2);
     const extraPages = await Promise.all(pageNums.map(() => context.newPage()));
 
     await Promise.all(
-      pageNums.map((p, idx) => {
-        const u = new URL(searchUrl);
-        u.searchParams.set('page', String(p));
-        const pageUrl = u.toString();
+      pageNums.map((pageNumber, pageIndex) => {
+        const pageUrlInstance = new URL(searchUrl);
+        pageUrlInstance.searchParams.set('page', String(pageNumber));
+        const pageUrl = pageUrlInstance.toString();
         return enqueue(pageUrl, async () => {
-          const pg = extraPages[idx];
-          if (isCancelled?.()) { await pg.close(); return; }
+          const currentPage = extraPages[pageIndex];
+          if (isCancelled?.()) { await currentPage.close(); return; }
           try {
-            onEvent({ type: 'progress', message: `Fetching page ${p}/${totalPages}…` });
-            const promise = waitForSearchApiResponse(pg);
-            await pg.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            onEvent({ type: 'progress', message: `Fetching page ${pageNumber}/${totalPages}…` });
+            const promise = waitForSearchApiResponseAsync(currentPage);
+            await currentPage.goto(pageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
 
             let listings: Listing[] = [];
-            const frendStateText = await pg.evaluate(() => document.getElementById('frend-state')?.textContent ?? null);
+            const frendStateText = await currentPage.evaluate(() => document.getElementById('frend-state')?.textContent ?? null);
             if (frendStateText) {
               try {
                 const parsed = parseFrendState(JSON.parse(frendStateText));
@@ -455,21 +455,21 @@ async function quickSearch(
             }
             emit(listings);
           } finally {
-            await pg.close();
+            await currentPage.close();
           }
         });
       })
     );
 
     onEvent({ type: 'complete' });
-  } catch (err) {
-    onEvent({ type: 'error', message: (err as Error).message });
+  } catch (error) {
+    onEvent({ type: 'error', message: (error as Error).message });
   } finally {
     await browser.close();
   }
 }
 
-async function deepSearch(
+async function deepSearchAsync(
   listings: Listing[],
   onEvent: (event: DeepSearchEvent) => void,
   isCancelled?: () => boolean
@@ -479,35 +479,35 @@ async function deepSearch(
     const context = await browser.newContext({ userAgent: USER_AGENT, locale: 'en-NZ' });
 
     await Promise.all(
-      listings.map((listing, i) =>
+      listings.map((listing, listingIndex) =>
         enqueue(listing.url, async () => {
-          const pg = await context.newPage();
-          if (isCancelled?.()) { await pg.close(); return; }
+          const currentPage = await context.newPage();
+          if (isCancelled?.()) { await currentPage.close(); return; }
           try {
-            onEvent({ type: 'progress', index: i + 1, total: listings.length, title: listing.title });
-            const detail = await fetchSingleListingDetail(pg, listing.url);
+            onEvent({ type: 'progress', index: listingIndex + 1, total: listings.length, title: listing.title });
+            const detail = await fetchSingleListingDetailAsync(currentPage, listing.url);
             onEvent({ type: 'detail', url: listing.url, detail });
           } finally {
-            await pg.close();
+            await currentPage.close();
           }
         })
       )
     );
     onEvent({ type: 'complete' });
-  } catch (err) {
-    onEvent({ type: 'error', message: (err as Error).message });
+  } catch (error) {
+    onEvent({ type: 'error', message: (error as Error).message });
   } finally {
     await browser.close();
   }
 }
 
 export const trademeRecipe: Recipe = {
-  name: trademePattern.name,
+  name: TRADEME_PATTERN.name,
   matches(url: string): boolean {
-    try { return new URL(url).hostname.endsWith(trademePattern.hostname); }
+    try { return new URL(url).hostname.endsWith(TRADEME_PATTERN.hostname); }
     catch { return false; }
   },
   extractImplicitFilters,
-  quickSearch,
-  deepSearch,
+  quickSearchAsync,
+  deepSearchAsync,
 };

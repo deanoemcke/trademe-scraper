@@ -58,45 +58,45 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
 ];
 
 
-function readSchemaVersion(db: Database.Database): number {
-  db.exec(`
+function readSchemaVersion(database: Database.Database): number {
+  database.exec(`
     CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
     INSERT INTO schema_version (version) SELECT 0 WHERE NOT EXISTS (SELECT 1 FROM schema_version);
   `);
-  const row = db.prepare<[], { version: number }>('SELECT version FROM schema_version').get();
+  const row = database.prepare<[], { version: number }>('SELECT version FROM schema_version').get();
   if (row === undefined) throw new Error('schema_version table is empty after initialisation');
   return row.version;
 }
 
-function writeSchemaVersion(db: Database.Database, version: number): void {
-  db.prepare('UPDATE schema_version SET version = ?').run(version);
+function writeSchemaVersion(database: Database.Database, version: number): void {
+  database.prepare('UPDATE schema_version SET version = ?').run(version);
 }
 
 export const LATEST_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
 
-export function applySchema(db: Database.Database): void {
-  const currentVersion = readSchemaVersion(db);
+export function applySchema(database: Database.Database): void {
+  const currentVersion = readSchemaVersion(database);
   const pending = MIGRATIONS.filter(m => m.version > currentVersion);
   if (pending.length === 0) return;
 
-  db.transaction(() => {
+  database.transaction(() => {
     for (const migration of pending) {
-      db.exec(migration.sql);
-      writeSchemaVersion(db, migration.version);
+      database.exec(migration.sql);
+      writeSchemaVersion(database, migration.version);
     }
   })();
 
   console.log(`[db] schema migrated from v${currentVersion} to v${pending[pending.length - 1].version}`);
 }
 
-function logDbStats(db: Database.Database): void {
-  const catCount = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories').get()!).n;
-  if (catCount === 0) console.warn('[categories] trademe_categories table is empty — run: npx ts-node scripts/import-categories.ts');
-  else console.log(`[categories] ${catCount} TradeMe categories loaded`);
+function logDbStats(database: Database.Database): void {
+  const totalCategoriesCount = (database.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM trademe_categories').get()!).n;
+  if (totalCategoriesCount === 0) console.warn('[categories] trademe_categories table is empty — run: npx ts-node scripts/import-categories.ts');
+  else console.log(`[categories] ${totalCategoriesCount} TradeMe categories loaded`);
 
-  const s = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM quick_searches').get()!).n;
-  const d = (db.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM deep_details').get()!).n;
-  if (s > 0 || d > 0) console.log(`[cache] opened db — ${s} searches, ${d} listing details`);
+  const searchCount = (database.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM quick_searches').get()!).n;
+  const detailCount = (database.prepare<[], { n: number }>('SELECT COUNT(*) as n FROM deep_details').get()!).n;
+  if (searchCount > 0 || detailCount > 0) console.log(`[cache] opened db — ${searchCount} searches, ${detailCount} listing details`);
 }
 
 export function getDb(): Database.Database {
@@ -128,47 +128,47 @@ export type CountRow = { n: number };
 // Using per-call prepare() is fine for these low-frequency admin routes;
 // for hot-path routes callers should cache the result if needed.
 
-export function stmtGetSearch(db: Database.Database) {
-  return db.prepare<[string], SearchRow>('SELECT data, cached_at FROM quick_searches WHERE url = ?');
+export function stmtGetSearch(database: Database.Database) {
+  return database.prepare<[string], SearchRow>('SELECT data, cached_at FROM quick_searches WHERE url = ?');
 }
-export function stmtSetSearch(db: Database.Database) {
-  return db.prepare('INSERT OR REPLACE INTO quick_searches (url, data, cached_at, listing_count) VALUES (?, ?, ?, ?)');
+export function stmtSetSearch(database: Database.Database) {
+  return database.prepare('INSERT OR REPLACE INTO quick_searches (url, data, cached_at, listing_count) VALUES (?, ?, ?, ?)');
 }
-export function stmtClearSearch(db: Database.Database) {
-  return db.prepare('DELETE FROM quick_searches');
+export function stmtClearSearch(database: Database.Database) {
+  return database.prepare('DELETE FROM quick_searches');
 }
-export function stmtGetDetail(db: Database.Database) {
-  return db.prepare<[string], DetailRow>('SELECT data, cached_at FROM deep_details WHERE url = ?');
+export function stmtGetDetail(database: Database.Database) {
+  return database.prepare<[string], DetailRow>('SELECT data, cached_at FROM deep_details WHERE url = ?');
 }
-export function stmtSetDetail(db: Database.Database) {
-  return db.prepare('INSERT OR REPLACE INTO deep_details (url, data, cached_at) VALUES (?, ?, ?)');
+export function stmtSetDetail(database: Database.Database) {
+  return database.prepare('INSERT OR REPLACE INTO deep_details (url, data, cached_at) VALUES (?, ?, ?)');
 }
-export function stmtClearDetails(db: Database.Database) {
-  return db.prepare('DELETE FROM deep_details');
+export function stmtClearDetails(database: Database.Database) {
+  return database.prepare('DELETE FROM deep_details');
 }
-export function stmtCountSearch(db: Database.Database) {
-  return db.prepare<[], CountRow>('SELECT COUNT(*) as n FROM quick_searches');
+export function stmtCountSearch(database: Database.Database) {
+  return database.prepare<[], CountRow>('SELECT COUNT(*) as n FROM quick_searches');
 }
-export function stmtCountDetails(db: Database.Database) {
-  return db.prepare<[], CountRow>('SELECT COUNT(*) as n FROM deep_details');
+export function stmtCountDetails(database: Database.Database) {
+  return database.prepare<[], CountRow>('SELECT COUNT(*) as n FROM deep_details');
 }
-export function stmtListSavedSearches(db: Database.Database) {
-  return db.prepare<[], SavedSearchRow>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC');
+export function stmtListSavedSearches(database: Database.Database) {
+  return database.prepare<[], SavedSearchRow>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches ORDER BY created_at DESC');
 }
-export function stmtGetSavedSearch(db: Database.Database) {
-  return db.prepare<[string], SavedSearchRow>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches WHERE id = ?');
+export function stmtGetSavedSearch(database: Database.Database) {
+  return database.prepare<[string], SavedSearchRow>('SELECT id, name, urls, filters, ai_filter, created_at FROM saved_searches WHERE id = ?');
 }
-export function stmtInsertSavedSearch(db: Database.Database) {
-  return db.prepare('INSERT INTO saved_searches (id, name, urls, filters, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+export function stmtInsertSavedSearch(database: Database.Database) {
+  return database.prepare('INSERT INTO saved_searches (id, name, urls, filters, ai_filter, created_at) VALUES (?, ?, ?, ?, ?, ?)');
 }
-export function stmtDeleteSavedSearch(db: Database.Database) {
-  return db.prepare('DELETE FROM saved_searches WHERE id = ?');
+export function stmtDeleteSavedSearch(database: Database.Database) {
+  return database.prepare('DELETE FROM saved_searches WHERE id = ?');
 }
-export function stmtGetCategoriesAtDepth2(db: Database.Database) {
-  return db.prepare<[], CategoryRow>('SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug');
+export function stmtGetCategoriesAtDepth2(database: Database.Database) {
+  return database.prepare<[], CategoryRow>('SELECT slug, display FROM trademe_categories WHERE depth = 2 ORDER BY slug');
 }
-export function stmtGetCategoriesByTop2(db: Database.Database) {
-  return db.prepare<[string], CategoryRow>('SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug');
+export function stmtGetCategoriesByTop2(database: Database.Database) {
+  return database.prepare<[string], CategoryRow>('SELECT slug, display FROM trademe_categories WHERE top2 = ? ORDER BY depth, slug');
 }
 
 // ── Cache freshness helpers ───────────────────────────────────────────────────

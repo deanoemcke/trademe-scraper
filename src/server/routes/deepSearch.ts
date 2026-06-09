@@ -9,16 +9,16 @@ import { readBody, startSSE, sse, sendJSON } from '../helpers';
 import { registerSearch, cancelSearch, isSearchCancelled, cleanupSearch } from '../cancellation';
 import { MAX_DEEP_SEARCH_ITEMS } from '../constants';
 
-export async function handleDeepSearch(req: IncomingMessage, res: ServerResponse): Promise<void> {
-  const body = await readBody(req).catch(() => null);
+export async function handleDeepSearch(request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const body = await readBody(request).catch(() => null);
   const rawBody = (body ?? {}) as Record<string, unknown>;
 
   let validatedListings: Array<{ url: string } & Record<string, unknown>>;
   try {
     const rawListings = requireArray(rawBody['listings'], 'listings');
-    validatedListings = rawListings.map((item, i) => requireListingUrl(item, i));
+    validatedListings = rawListings.map((item, listingIndex) => requireListingUrl(item, listingIndex));
   } catch (err) {
-    sendJSON(res, 400, { error: (err as Error).message }); return;
+    sendJSON(response, 400, { error: (err as Error).message }); return;
   }
 
   const deepSearchIdRaw = rawBody['deepSearchId'];
@@ -29,71 +29,71 @@ export async function handleDeepSearch(req: IncomingMessage, res: ServerResponse
   const listings = (validatedListings as unknown as Listing[]).slice(0, MAX_DEEP_SEARCH_ITEMS);
 
   // Group by recipe so mixed TradeMe+Facebook sets both get scraped
-  const byRecipe = new Map<string, Listing[]>();
+  const listingsByRecipe = new Map<string, Listing[]>();
   for (const listing of listings) {
-    const r = getRecipeForUrl(listing.url);
-    if (!r) continue;
-    const group = byRecipe.get(r.name) ?? [];
+    const recipe = getRecipeForUrl(listing.url);
+    if (!recipe) continue;
+    const group = listingsByRecipe.get(recipe.name) ?? [];
     group.push(listing);
-    byRecipe.set(r.name, group);
+    listingsByRecipe.set(recipe.name, group);
   }
-  if (byRecipe.size === 0) { sendJSON(res, 400, { error: 'No recipe found for these listings' }); return; }
+  if (listingsByRecipe.size === 0) { sendJSON(response, 400, { error: 'No recipe found for these listings' }); return; }
 
-  const db = getDb();
+  const database = getDb();
   const fromCache: { url: string; detail: ListingDetail }[] = [];
   const toScrapeByRecipe = new Map<string, Listing[]>();
   for (const listing of listings) {
-    const r = getRecipeForUrl(listing.url);
-    if (!r) continue;
-    const row = stmtGetDetail(db).get(listing.url);
+    const recipe = getRecipeForUrl(listing.url);
+    if (!recipe) continue;
+    const row = stmtGetDetail(database).get(listing.url);
     if (row && isFresh(row.cached_at)) fromCache.push({ url: listing.url, detail: JSON.parse(row.data) as ListingDetail });
     else {
-      const group = toScrapeByRecipe.get(r.name) ?? [];
+      const group = toScrapeByRecipe.get(recipe.name) ?? [];
       group.push(listing);
-      toScrapeByRecipe.set(r.name, group);
+      toScrapeByRecipe.set(recipe.name, group);
     }
   }
 
-  const totalToScrape = [...toScrapeByRecipe.values()].reduce((n, g) => n + g.length, 0);
+  const totalToScrape = [...toScrapeByRecipe.values()].reduce((total, group) => total + group.length, 0);
   if (totalToScrape === 0) {
     console.log(`[cache] detail hit for all ${listings.length} listings`);
-    startSSE(res);
-    for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
-    sse(res, { type: 'complete' });
-    res.end(); return;
+    startSSE(response);
+    for (const { url, detail } of fromCache) sse(response, { type: 'detail', url, detail });
+    sse(response, { type: 'complete' });
+    response.end(); return;
   }
 
   if (fromCache.length > 0) console.log(`[cache] detail hit for ${fromCache.length}/${listings.length} listings`);
 
-  startSSE(res);
+  startSSE(response);
   if (deepSearchId) {
     registerSearch(deepSearchId);
-    req.on('close', () => cancelSearch(deepSearchId));
+    request.on('close', () => cancelSearch(deepSearchId));
   }
   const isDeepCancelled = () => deepSearchId ? isSearchCancelled(deepSearchId) : false;
-  const deepHeartbeat = setInterval(() => { try { res.write(': heartbeat\n\n'); } catch { /* ignore */ } }, 15000);
-  for (const { url, detail } of fromCache) sse(res, { type: 'detail', url, detail });
+  const deepHeartbeat = setInterval(() => { try { response.write(': heartbeat\n\n'); } catch { /* ignore */ } }, 15000);
+  for (const { url, detail } of fromCache) sse(response, { type: 'detail', url, detail });
 
   try {
     await Promise.all(
       [...toScrapeByRecipe.entries()].map(([recipeName, recipeListings]) => {
         const recipe = getRecipeForUrl(recipeListings[0].url)!;
-        return recipe.deepSearch(recipeListings, (event) => {
+        return recipe.deepSearchAsync(recipeListings, (event) => {
           if (event.type === 'complete') return; // route handler owns termination
           if (event.type === 'detail') {
-            stmtSetDetail(db).run(event.url, JSON.stringify(event.detail), Date.now());
+            stmtSetDetail(database).run(event.url, JSON.stringify(event.detail), Date.now());
             console.log(`[cache][${recipeName}] stored detail for ${event.url}`);
           }
-          try { sse(res, event); } catch { /* client disconnected */ }
+          try { sse(response, event); } catch { /* client disconnected */ }
         }, isDeepCancelled);
       })
     );
-    if (!isDeepCancelled()) try { sse(res, { type: 'complete' }); } catch { /* ignore */ }
+    if (!isDeepCancelled()) try { sse(response, { type: 'complete' }); } catch { /* ignore */ }
   } catch (err) {
-    if (!isDeepCancelled()) try { sse(res, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
+    if (!isDeepCancelled()) try { sse(response, { type: 'error', message: (err as Error).message }); } catch { /* ignore */ }
   } finally {
     clearInterval(deepHeartbeat);
     if (deepSearchId) cleanupSearch(deepSearchId);
-    try { res.end(); } catch { /* client already disconnected */ }
+    try { response.end(); } catch { /* client already disconnected */ }
   }
 }

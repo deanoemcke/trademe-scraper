@@ -10,26 +10,26 @@ import type { FilterReason } from '../lib/filters';
 export interface ListingItem {
   data: Listing;
   detail: ListingDetail | null;
-  deepSearched: boolean;
+  hasBeenDeepSearched: boolean;
   filterReason: FilterReason | null;
   aiCheckedHash: number | null;
   aiFilterReason: string | null;
 }
 
 export interface UrlCardState {
-  el: HTMLElement;
+  containerElement: HTMLElement;
   input: HTMLInputElement;
-  searchBtn: HTMLButtonElement;
-  removeBtn: HTMLButtonElement;
-  criteriaEl: HTMLElement;
-  countEl: HTMLElement;
-  cacheStatusEl: HTMLElement;
-  statusEl: HTMLElement;
-  searched: boolean;
+  searchButton: HTMLButtonElement;
+  removeButton: HTMLButtonElement;
+  criteriaElement: HTMLElement;
+  countElement: HTMLElement;
+  cacheStatusElement: HTMLElement;
+  statusElement: HTMLElement;
+  hasBeenSearched: boolean;
   searchedUrl: string;
-  searching: boolean;
+  isSearching: boolean;
   searchId: string | null;
-  cancellationRequested: boolean;
+  isCancellationRequested: boolean;
   listingUrls: string[];
 }
 

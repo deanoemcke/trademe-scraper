@@ -24,73 +24,73 @@ import {
 
 // ── Utility ───────────────────────────────────────────────────────────────────
 
-function promptHash(s: string): number {
+function promptHash(inputString: string): number {
   let h = 5381;
-  for (let i = 0; i < s.length; i++) h = (h * 33 ^ s.charCodeAt(i)) >>> 0;
+  for (let charIndex = 0; charIndex < inputString.length; charIndex++) h = (h * 33 ^ inputString.charCodeAt(charIndex)) >>> 0;
   return h;
 }
 
 
-function el<T extends HTMLElement>(id: string): T {
+function getElement<T extends HTMLElement>(id: string): T {
   const elem = document.getElementById(id);
   if (!elem) throw new Error(`Element #${id} not found`);
   return elem as T;
 }
 
 function getFilters(overrides?: Partial<FrontendFilters>): FrontendFilters {
-  const minP = el<HTMLInputElement>('minPrice').value;
-  const maxP = el<HTMLInputElement>('maxPrice').value;
-  const kw   = el<HTMLInputElement>('keywords').value.trim();
-  const ex   = el<HTMLInputElement>('excludeKeywords').value.trim();
+  const minimumPriceRaw = getElement<HTMLInputElement>('minPrice').value;
+  const maximumPriceRaw = getElement<HTMLInputElement>('maxPrice').value;
+  const keywordsRaw     = getElement<HTMLInputElement>('keywords').value.trim();
+  const excludedKeywordsRaw = getElement<HTMLInputElement>('excludeKeywords').value.trim();
   return {
-    minPrice: minP ? parseFloat(minP) : undefined,
-    maxPrice: maxP ? parseFloat(maxP) : undefined,
-    keywords: kw ? kw.split(',').map(s => s.trim()).filter(Boolean) : undefined,
-    excludeKeywords: ex ? ex.split(',').map(s => s.trim()).filter(Boolean) : undefined,
-    shippingAvailable: el<HTMLInputElement>('filterShipping').checked,
-    pickupAvailable:   el<HTMLInputElement>('filterPickup').checked,
+    minPrice: minimumPriceRaw ? parseFloat(minimumPriceRaw) : undefined,
+    maxPrice: maximumPriceRaw ? parseFloat(maximumPriceRaw) : undefined,
+    keywords: keywordsRaw ? keywordsRaw.split(',').map(keyword => keyword.trim()).filter(Boolean) : undefined,
+    excludeKeywords: excludedKeywordsRaw ? excludedKeywordsRaw.split(',').map(keyword => keyword.trim()).filter(Boolean) : undefined,
+    shippingAvailable: getElement<HTMLInputElement>('filterShipping').checked,
+    pickupAvailable:   getElement<HTMLInputElement>('filterPickup').checked,
     ...overrides,
   };
 }
 
 
-function setFilters(f: FrontendFilters): void {
-  el<HTMLInputElement>('minPrice').value = f.minPrice != null ? String(f.minPrice) : '';
-  el<HTMLInputElement>('maxPrice').value = f.maxPrice != null ? String(f.maxPrice) : '';
-  el<HTMLInputElement>('keywords').value = f.keywords?.join(', ') ?? '';
-  el<HTMLInputElement>('excludeKeywords').value = f.excludeKeywords?.join(', ') ?? '';
-  el<HTMLInputElement>('filterShipping').checked = f.shippingAvailable ?? true;
-  el<HTMLInputElement>('filterPickup').checked = f.pickupAvailable ?? true;
+function setFilters(filters: FrontendFilters): void {
+  getElement<HTMLInputElement>('minPrice').value = filters.minPrice != null ? String(filters.minPrice) : '';
+  getElement<HTMLInputElement>('maxPrice').value = filters.maxPrice != null ? String(filters.maxPrice) : '';
+  getElement<HTMLInputElement>('keywords').value = filters.keywords?.join(', ') ?? '';
+  getElement<HTMLInputElement>('excludeKeywords').value = filters.excludeKeywords?.join(', ') ?? '';
+  getElement<HTMLInputElement>('filterShipping').checked = filters.shippingAvailable ?? true;
+  getElement<HTMLInputElement>('filterPickup').checked = filters.pickupAvailable ?? true;
 }
 
-function setCardStatus(state: UrlCardState, msg: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
-  const bar = state.statusEl;
-  if (!msg) { bar.classList.add('hidden'); return; }
-  bar.className = `url-card-status ${type}`;
-  bar.innerHTML = type === 'info'
-    ? `<span class="spinner"></span><span>${esc(msg)}</span>`
-    : `<span>${esc(msg)}</span>`;
-  bar.classList.remove('hidden');
+function setCardStatus(state: UrlCardState, statusMessage: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
+  const statusBar = state.statusElement;
+  if (!statusMessage) { statusBar.classList.add('hidden'); return; }
+  statusBar.className = `url-card-status ${type}`;
+  statusBar.innerHTML = type === 'info'
+    ? `<span class="spinner"></span><span>${esc(statusMessage)}</span>`
+    : `<span>${esc(statusMessage)}</span>`;
+  statusBar.classList.remove('hidden');
 }
 
-function setSearchingStatus(state: UrlCardState, msg: string): void {
-  const bar = state.statusEl;
-  bar.className = 'url-card-status info';
-  bar.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`;
-  if (!state.cancellationRequested) {
-    const btn = document.createElement('button');
-    btn.className = 'cache-clear-btn';
-    btn.style.marginLeft = '0.5rem';
-    btn.textContent = 'cancel';
-    btn.addEventListener('click', () => cancelSearch(state));
-    bar.appendChild(btn);
+function setSearchingStatus(state: UrlCardState, statusMessage: string): void {
+  const statusBar = state.statusElement;
+  statusBar.className = 'url-card-status info';
+  statusBar.innerHTML = `<span class="spinner"></span><span>${esc(statusMessage)}</span>`;
+  if (!state.isCancellationRequested) {
+    const cancelButton = document.createElement('button');
+    cancelButton.className = 'cache-clear-btn';
+    cancelButton.style.marginLeft = '0.5rem';
+    cancelButton.textContent = 'cancel';
+    cancelButton.addEventListener('click', () => cancelSearch(state));
+    statusBar.appendChild(cancelButton);
   }
-  bar.classList.remove('hidden');
+  statusBar.classList.remove('hidden');
 }
 
 function cancelSearch(state: UrlCardState): void {
-  if (!state.searching || state.cancellationRequested) return;
-  state.cancellationRequested = true;
+  if (!state.isSearching || state.isCancellationRequested) return;
+  state.isCancellationRequested = true;
   setSearchingStatus(state, 'Cancelling…');
   fetch('/api/cancel-search', {
     method: 'POST',
@@ -99,19 +99,19 @@ function cancelSearch(state: UrlCardState): void {
   }).catch(() => null);
 }
 
-function setDeepSearchingStatus(msg: string): void {
-  const bar = el('statusBar');
-  bar.className = 'status-bar info';
-  bar.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`;
+function setDeepSearchingStatus(statusMessage: string): void {
+  const statusBar = getElement('statusBar');
+  statusBar.className = 'status-bar info';
+  statusBar.innerHTML = `<span class="spinner"></span><span>${esc(statusMessage)}</span>`;
   if (!deepSearchCancellationRequested) {
-    const btn = document.createElement('button');
-    btn.className = 'cache-clear-btn';
-    btn.style.marginLeft = '0.5rem';
-    btn.textContent = 'cancel';
-    btn.addEventListener('click', cancelDeepSearch);
-    bar.appendChild(btn);
+    const cancelButton = document.createElement('button');
+    cancelButton.className = 'cache-clear-btn';
+    cancelButton.style.marginLeft = '0.5rem';
+    cancelButton.textContent = 'cancel';
+    cancelButton.addEventListener('click', cancelDeepSearch);
+    statusBar.appendChild(cancelButton);
   }
-  bar.classList.remove('hidden');
+  statusBar.classList.remove('hidden');
 }
 
 function cancelDeepSearch(): void {
@@ -125,20 +125,20 @@ function cancelDeepSearch(): void {
   }).catch(() => null);
 }
 
-function setStatus(msg: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
-  const bar = el('statusBar');
-  if (!msg) { bar.classList.add('hidden'); return; }
-  bar.className = `status-bar ${type}`;
-  bar.innerHTML = type === 'info'
-    ? `<span class="spinner"></span><span>${esc(msg)}</span>`
-    : `<span>${esc(msg)}</span>`;
-  bar.classList.remove('hidden');
+function setStatus(statusMessage: string | null, type: 'info' | 'success' | 'error' = 'info'): void {
+  const statusBar = getElement('statusBar');
+  if (!statusMessage) { statusBar.classList.add('hidden'); return; }
+  statusBar.className = `status-bar ${type}`;
+  statusBar.innerHTML = type === 'info'
+    ? `<span class="spinner"></span><span>${esc(statusMessage)}</span>`
+    : `<span>${esc(statusMessage)}</span>`;
+  statusBar.classList.remove('hidden');
 }
 
 function updateCardSearchBtn(state: UrlCardState): void {
   const current = state.input.value.trim();
-  const alreadySearched = state.searched && current === state.searchedUrl;
-  state.searchBtn.disabled = state.searching || isDeepSearchRunning || !canHandleUrl(current) || alreadySearched;
+  const alreadySearched = state.hasBeenSearched && current === state.searchedUrl;
+  state.searchButton.disabled = state.isSearching || isDeepSearchRunning || !canHandleUrl(current) || alreadySearched;
 }
 
 function setDeepSearchBusy(busy: boolean): void {
@@ -163,25 +163,25 @@ function createUrlCard(): UrlCardState {
     <div class="url-card-status hidden"></div>
     <div class="url-criteria hidden"><div class="criteria-grid"></div><div class="cache-status hidden"></div></div>
   `;
-  el('urlCardsContainer').appendChild(card);
+  getElement('urlCardsContainer').appendChild(card);
 
   const input = card.querySelector<HTMLInputElement>('.url-input')!;
-  const searchBtn = card.querySelector<HTMLButtonElement>('.url-search-btn')!;
-  const removeBtn = card.querySelector<HTMLButtonElement>('.url-remove-btn')!;
-  const criteriaEl = card.querySelector<HTMLElement>('.url-criteria')!;
-  const countEl = card.querySelector<HTMLElement>('.url-card-count')!;
-  const cacheStatusEl = card.querySelector<HTMLElement>('.cache-status')!;
-  const statusEl = card.querySelector<HTMLElement>('.url-card-status')!;
+  const searchButton = card.querySelector<HTMLButtonElement>('.url-search-btn')!;
+  const removeButton = card.querySelector<HTMLButtonElement>('.url-remove-btn')!;
+  const criteriaElement = card.querySelector<HTMLElement>('.url-criteria')!;
+  const countElement = card.querySelector<HTMLElement>('.url-card-count')!;
+  const cacheStatusElement = card.querySelector<HTMLElement>('.cache-status')!;
+  const statusElement = card.querySelector<HTMLElement>('.url-card-status')!;
 
-  const state: UrlCardState = { el: card, input, searchBtn, removeBtn, criteriaEl, countEl, cacheStatusEl, statusEl, searched: false, searchedUrl: '', searching: false, searchId: null, cancellationRequested: false, listingUrls: [] };
+  const state: UrlCardState = { containerElement: card, input, searchButton, removeButton, criteriaElement, countElement, cacheStatusElement, statusElement, hasBeenSearched: false, searchedUrl: '', isSearching: false, searchId: null, isCancellationRequested: false, listingUrls: [] };
   urlCardStates.push(state);
 
   input.addEventListener('input', () => updateCardSearchBtn(state));
-  input.addEventListener('keydown', (e: KeyboardEvent) => {
-    if (e.key === 'Enter' && !searchBtn.disabled) searchUrlCard(state);
+  input.addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
+    if (keyboardEvent.key === 'Enter' && !searchButton.disabled) searchUrlCardAsync(state);
   });
-  searchBtn.addEventListener('click', () => searchUrlCard(state));
-  removeBtn.addEventListener('click', () => removeUrlCard(state));
+  searchButton.addEventListener('click', () => searchUrlCardAsync(state));
+  removeButton.addEventListener('click', () => removeUrlCard(state));
 
   updateRemoveButtons();
   return state;
@@ -189,27 +189,27 @@ function createUrlCard(): UrlCardState {
 
 function resetAllResults(): void {
   listingsByUrl.clear();
-  el('listingsContainer').innerHTML = '';
-  el('resultCount').textContent = '0';
+  getElement('listingsContainer').innerHTML = '';
+  getElement('resultCount').textContent = '0';
   setShowFilteredListings(false);
-  el<HTMLButtonElement>('toggleFilteredBtn').textContent = 'show';
-  el('filteredCount').classList.add('hidden');
-  el('resultsSection').classList.add('hidden');
-  for (const s of urlCardStates) {
-    s.listingUrls = [];
-    s.searched = false;
-    s.searchedUrl = '';
-    s.countEl.textContent = '';
-    s.criteriaEl.querySelector('.criteria-grid')!.innerHTML = '';
-    s.criteriaEl.classList.add('hidden');
-    s.cacheStatusEl.classList.add('hidden');
-    s.cacheStatusEl.innerHTML = '';
-    s.statusEl.classList.add('hidden');
-    s.searching = false;
-    s.searchId = null;
-    s.cancellationRequested = false;
-    s.input.readOnly = false;
-    updateCardSearchBtn(s);
+  getElement<HTMLButtonElement>('toggleFilteredBtn').textContent = 'show';
+  getElement('filteredCount').classList.add('hidden');
+  getElement('resultsSection').classList.add('hidden');
+  for (const cardState of urlCardStates) {
+    cardState.listingUrls = [];
+    cardState.hasBeenSearched = false;
+    cardState.searchedUrl = '';
+    cardState.countElement.textContent = '';
+    cardState.criteriaElement.querySelector('.criteria-grid')!.innerHTML = '';
+    cardState.criteriaElement.classList.add('hidden');
+    cardState.cacheStatusElement.classList.add('hidden');
+    cardState.cacheStatusElement.innerHTML = '';
+    cardState.statusElement.classList.add('hidden');
+    cardState.isSearching = false;
+    cardState.searchId = null;
+    cardState.isCancellationRequested = false;
+    cardState.input.readOnly = false;
+    updateCardSearchBtn(cardState);
   }
   renderDerived();
 }
@@ -217,34 +217,34 @@ function resetAllResults(): void {
 function getOrderedListings(): ListingItem[] {
   const seen = new Set<string>();
   return urlCardStates
-    .flatMap(s => s.listingUrls.filter(u => !seen.has(u) && seen.add(u)))
-    .map(u => listingsByUrl.get(u)!)
+    .flatMap(cardState => cardState.listingUrls.filter(listingUrl => !seen.has(listingUrl) && seen.add(listingUrl)))
+    .map(listingUrl => listingsByUrl.get(listingUrl)!)
     .filter(Boolean);
 }
 
 function renderDerived(): void {
   const listings = getOrderedListings();
-  const visible = listings.filter(i => i.filterReason === null && i.aiFilterReason === null);
+  const visible = listings.filter(listingItem => listingItem.filterReason === null && listingItem.aiFilterReason === null);
   const filtered = listings.length - visible.length;
-  el('resultCount').textContent = String(visible.length);
-  el('filteredCountNum').textContent = String(filtered);
-  el('filteredCount').classList.toggle('hidden', filtered === 0);
-  const isSearching = urlCardStates.some(s => s.searching);
-  const hasUnscraped = visible.some(i => !i.deepSearched);
-  el<HTMLButtonElement>('deepBtn').disabled = isDeepSearchRunning || isSearching || !hasUnscraped;
-  const prompt = el<HTMLTextAreaElement>('aiFilter').value.trim();
+  getElement('resultCount').textContent = String(visible.length);
+  getElement('filteredCountNum').textContent = String(filtered);
+  getElement('filteredCount').classList.toggle('hidden', filtered === 0);
+  const isAnyCardSearching = urlCardStates.some(cardState => cardState.isSearching);
+  const hasUnscraped = visible.some(listingItem => !listingItem.hasBeenDeepSearched);
+  getElement<HTMLButtonElement>('deepBtn').disabled = isDeepSearchRunning || isAnyCardSearching || !hasUnscraped;
+  const prompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
   const hash = promptHash(prompt);
-  el<HTMLButtonElement>('applyAiFilterBtn').disabled =
-    !prompt || listings.length === 0 || listings.every(i => i.aiCheckedHash === hash);
+  getElement<HTMLButtonElement>('applyAiFilterBtn').disabled =
+    !prompt || listings.length === 0 || listings.every(listingItem => listingItem.aiCheckedHash === hash);
 }
 
 function updateRemoveButtons(): void {
   const show = urlCardStates.length > 1;
-  for (const s of urlCardStates) s.removeBtn.classList.toggle('hidden', !show);
+  for (const cardState of urlCardStates) cardState.removeButton.classList.toggle('hidden', !show);
 }
 
 function resetCardForResearch(state: UrlCardState): void {
-  const otherUrls = new Set(urlCardStates.flatMap(s => s === state ? [] : s.listingUrls));
+  const otherUrls = new Set(urlCardStates.flatMap(cardState => cardState === state ? [] : cardState.listingUrls));
   for (const url of state.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
@@ -253,21 +253,21 @@ function resetCardForResearch(state: UrlCardState): void {
     }
   }
   state.listingUrls = [];
-  state.searched = false;
+  state.hasBeenSearched = false;
   state.searchedUrl = '';
-  state.countEl.textContent = '';
-  state.criteriaEl.querySelector('.criteria-grid')!.innerHTML = '';
-  state.criteriaEl.classList.add('hidden');
-  state.cacheStatusEl.classList.add('hidden');
-  state.cacheStatusEl.innerHTML = '';
-  state.statusEl.classList.add('hidden');
+  state.countElement.textContent = '';
+  state.criteriaElement.querySelector('.criteria-grid')!.innerHTML = '';
+  state.criteriaElement.classList.add('hidden');
+  state.cacheStatusElement.classList.add('hidden');
+  state.cacheStatusElement.innerHTML = '';
+  state.statusElement.classList.add('hidden');
   state.input.readOnly = false;
-  if (getOrderedListings().length === 0) el('resultsSection').classList.add('hidden');
+  if (getOrderedListings().length === 0) getElement('resultsSection').classList.add('hidden');
   renderDerived();
 }
 
 function removeUrlCard(state: UrlCardState): void {
-  const otherUrls = new Set(urlCardStates.flatMap(s => s === state ? [] : s.listingUrls));
+  const otherUrls = new Set(urlCardStates.flatMap(cardState => cardState === state ? [] : cardState.listingUrls));
   for (const url of state.listingUrls) {
     if (!otherUrls.has(url)) {
       getCardByUrl(url)?.remove();
@@ -275,24 +275,24 @@ function removeUrlCard(state: UrlCardState): void {
       cardIdByUrl.delete(url);
     }
   }
-  state.el.remove();
-  const idx = urlCardStates.indexOf(state);
-  if (idx !== -1) urlCardStates.splice(idx, 1);
-  if (getOrderedListings().length === 0) el('resultsSection').classList.add('hidden');
+  state.containerElement.remove();
+  const cardIndex = urlCardStates.indexOf(state);
+  if (cardIndex !== -1) urlCardStates.splice(cardIndex, 1);
+  if (getOrderedListings().length === 0) getElement('resultsSection').classList.add('hidden');
   updateRemoveButtons();
   applyClientFilters();
 }
 
-async function searchUrlCard(state: UrlCardState): Promise<void> {
+async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
   const url = state.input.value.trim();
   if (!canHandleUrl(url)) return;
 
-  if (state.searched) resetCardForResearch(state);
+  if (state.hasBeenSearched) resetCardForResearch(state);
 
-  el('resultsSection').classList.remove('hidden');
-  state.searching = true;
+  getElement('resultsSection').classList.remove('hidden');
+  state.isSearching = true;
   state.searchId = crypto.randomUUID();
-  state.cancellationRequested = false;
+  state.isCancellationRequested = false;
   updateCardSearchBtn(state);
   renderDerived();
   setSearchingStatus(state, 'Fetching listings…');
@@ -301,23 +301,23 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
   let cachedAge = '';
   let searchError = false;
   try {
-    await streamPost('/api/quick-search', { url, searchId: state.searchId }, (ev) => {
+    await streamPostAsync('/api/quick-search', { url, searchId: state.searchId }, (ev) => {
       if (ev.type === 'criteria') {
         const filters = ev.filters as Array<[string, string]>;
-        state.criteriaEl.querySelector('.criteria-grid')!.innerHTML = filters
+        state.criteriaElement.querySelector('.criteria-grid')!.innerHTML = filters
           .map(([k, v]) => `<div class="criteria-row"><span class="criteria-key">${esc(k)}</span><span class="criteria-val">${esc(v)}</span></div>`)
           .join('');
-        state.criteriaEl.classList.remove('hidden');
+        state.criteriaElement.classList.remove('hidden');
       } else if (ev.type === 'cached') {
         cachedAge = ev.age as string;
       } else if (ev.type === 'progress') {
-        if (!state.cancellationRequested) setSearchingStatus(state, ev.message as string);
+        if (!state.isCancellationRequested) setSearchingStatus(state, ev.message as string);
       } else if (ev.type === 'listing') {
         const listing = ev.data as Listing;
         totalFound++;
         state.listingUrls.push(listing.url);
         if (!listingsByUrl.has(listing.url)) {
-          const item: ListingItem = { data: listing, detail: null, deepSearched: false, filterReason: null, aiCheckedHash: null, aiFilterReason: null };
+          const item: ListingItem = { data: listing, detail: null, hasBeenDeepSearched: false, filterReason: null, aiCheckedHash: null, aiFilterReason: null };
           listingsByUrl.set(listing.url, item);
           renderCard(item);
           renderDerived();
@@ -327,15 +327,15 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
         setCardStatus(state, ev.message as string, 'error');
       }
     });
-  } catch (err) {
+  } catch (error) {
     searchError = true;
-    setCardStatus(state, (err as Error).message, 'error');
+    setCardStatus(state, (error as Error).message, 'error');
   }
 
-  state.searching = false;
-  const wasCancelled = state.cancellationRequested;
+  state.isSearching = false;
+  const wasCancelled = state.isCancellationRequested;
   state.searchId = null;
-  state.cancellationRequested = false;
+  state.isCancellationRequested = false;
 
   if (wasCancelled) {
     setCardStatus(state, `Cancelled — ${totalFound} listing${totalFound !== 1 ? 's' : ''} loaded`, 'error');
@@ -344,18 +344,18 @@ async function searchUrlCard(state: UrlCardState): Promise<void> {
     return;
   }
 
-  state.searched = true;
+  state.hasBeenSearched = true;
   state.searchedUrl = url;
   state.input.readOnly = true;
   updateCardSearchBtn(state);
 
   if (cachedAge) {
-    state.cacheStatusEl.innerHTML =
+    state.cacheStatusElement.innerHTML =
       `Loaded from cache — ${esc(cachedAge)} <button class="cache-clear-btn">Clear</button>`;
-    state.cacheStatusEl.classList.remove('hidden');
-    state.cacheStatusEl.querySelector('.cache-clear-btn')!.addEventListener('click', clearQuickSearchCache);
+    state.cacheStatusElement.classList.remove('hidden');
+    state.cacheStatusElement.querySelector('.cache-clear-btn')!.addEventListener('click', clearQuickSearchCacheAsync);
   }
-  state.countEl.textContent = `— ${totalFound} listing${totalFound !== 1 ? 's' : ''}`;
+  state.countElement.textContent = `— ${totalFound} listing${totalFound !== 1 ? 's' : ''}`;
 
   if (!searchError) {
     setCardStatus(state, `${totalFound} listing${totalFound !== 1 ? 's' : ''} found`, 'success');
@@ -402,30 +402,30 @@ function applyClientFilters(): void {
 }
 
 function updateDiscoveryBtn(): void {
-  const hasPrompt = !!el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
-  const maxPriceRaw = el<HTMLInputElement>('discoveryMaxPrice').value.trim();
+  const hasPrompt = !!getElement<HTMLTextAreaElement>('discoveryPrompt').value.trim();
+  const maxPriceRaw = getElement<HTMLInputElement>('discoveryMaxPrice').value.trim();
   const hasValidPrice = maxPriceRaw !== '' && isFinite(parseFloat(maxPriceRaw)) && parseFloat(maxPriceRaw) > 0;
-  const isPickupOnly = el<HTMLSelectElement>('discoveryFulfillment').value === 'pickup';
-  const hasRegion = !isPickupOnly || !!el<HTMLSelectElement>('discoveryRegion').value;
-  el<HTMLButtonElement>('discoveryBtn').disabled = !hasPrompt || !hasValidPrice || !hasRegion;
+  const isPickupOnly = getElement<HTMLSelectElement>('discoveryFulfillment').value === 'pickup';
+  const hasRegion = !isPickupOnly || !!getElement<HTMLSelectElement>('discoveryRegion').value;
+  getElement<HTMLButtonElement>('discoveryBtn').disabled = !hasPrompt || !hasValidPrice || !hasRegion;
 }
 
-async function runAiFilter(): Promise<void> {
-  const prompt = el<HTMLTextAreaElement>('aiFilter').value.trim();
+async function runAiFilterAsync(): Promise<void> {
+  const prompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
   if (!prompt) return;
   const hash = promptHash(prompt);
   const toCheck = getOrderedListings().filter(item => item.aiCheckedHash !== hash && item.filterReason === null);
   if (toCheck.length === 0) return;
 
-  const btn = el<HTMLButtonElement>('applyAiFilterBtn');
-  btn.disabled = true;
+  const applyButton = getElement<HTMLButtonElement>('applyAiFilterBtn');
+  applyButton.disabled = true;
   let checked = 0;
-  btn.textContent = `Filtering 0/${toCheck.length}…`;
+  applyButton.textContent = `Filtering 0/${toCheck.length}…`;
 
   let streamError: string | null = null;
 
   try {
-    await streamPost('/api/ai-filter', {
+    await streamPostAsync('/api/ai-filter', {
       prompt,
       listings: toCheck.map(item => ({
         url: item.data.url,
@@ -444,22 +444,22 @@ async function runAiFilter(): Promise<void> {
             checked++;
           }
         }
-        btn.textContent = `Filtering ${checked}/${toCheck.length}…`;
+        applyButton.textContent = `Filtering ${checked}/${toCheck.length}…`;
         applyClientFilters();
       } else if (event.type === 'error') {
         streamError = event.message as string;
       }
     });
     if (streamError) throw new Error(streamError);
-  } catch (err) {
-    setStatus((err as Error).message, 'error');
+  } catch (error) {
+    setStatus((error as Error).message, 'error');
   } finally {
-    btn.textContent = 'Apply AI Filter';
+    applyButton.textContent = 'Apply AI Filter';
     renderDerived();
   }
 }
 
-async function clearQuickSearchCache(): Promise<void> {
+async function clearQuickSearchCacheAsync(): Promise<void> {
   await fetch('/api/cache/clear', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -470,29 +470,29 @@ async function clearQuickSearchCache(): Promise<void> {
 
 // ── SSE streaming ─────────────────────────────────────────────────────────────
 
-async function streamPost(
+async function streamPostAsync(
   endpoint: string,
   body: unknown,
   onData: (data: Record<string, unknown>) => void,
 ): Promise<void> {
-  const res = await fetch(endpoint, {
+  const response = await fetch(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` })) as { error?: string };
-    throw new Error(err.error ?? `HTTP ${res.status}`);
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({ error: `HTTP ${response.status}` })) as { error?: string };
+    throw new Error(errorBody.error ?? `HTTP ${response.status}`);
   }
-  const reader = res.body!.getReader();
-  const dec = new TextDecoder();
-  let buf = '';
+  const reader = response.body!.getReader();
+  const textDecoder = new TextDecoder();
+  let streamBuffer = '';
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    buf += dec.decode(value, { stream: true });
-    const lines = buf.split('\n');
-    buf = lines.pop() ?? '';
+    streamBuffer += textDecoder.decode(value, { stream: true });
+    const lines = streamBuffer.split('\n');
+    streamBuffer = lines.pop() ?? '';
     for (const line of lines) {
       if (line.startsWith('data: ')) {
         try { onData(JSON.parse(line.slice(6))); } catch { /* ignore */ }
@@ -510,21 +510,21 @@ function getCardByUrl(url: string): HTMLElement | null {
 }
 
 
-function shippingBadge(fulfillment: Listing['fulfillment']): string {
+function renderShippingBadgeHtml(fulfillment: Listing['fulfillment']): string {
   if (!fulfillment) return '';
   if (fulfillment.pickupAvailable && fulfillment.shippingAvailable) return '<span class="badge badge-both">Allows pickups</span>';
   if (fulfillment.pickupAvailable) return '<span class="badge badge-pickuponly">Pickup only</span>';
   return '';
 }
 
-function reserveText(status: string): string {
+function formatReserveText(status: string): string {
   if (status === 'NONE') return 'No reserve';
   if (status === 'MET') return 'Reserve met';
   if (status === 'NOT_MET') return 'Reserve not met';
   return '';
 }
 
-function tidyDescription(text: string): string {
+function cleanDescription(text: string): string {
   return text
     .split('\n')
     .map(line => line.trimEnd())
@@ -549,7 +549,7 @@ function buildMetaHtml(item: ListingItem): string {
     const { shippingAvailable, pickupAvailable } = detail;
     const hasDefiniteData = shippingAvailable !== null || pickupAvailable !== null;
     if (item.data.isAuction) {
-      const reserve = reserveText(detail.reserveStatus);
+      const reserve = formatReserveText(detail.reserveStatus);
       if (reserve) html += `<span class="badge badge-${detail.reserveStatus.toLowerCase().replace('_', '-')}">${esc(reserve)}</span>`;
     }
     if (hasDefiniteData) {
@@ -561,10 +561,10 @@ function buildMetaHtml(item: ListingItem): string {
         html += '<span class="badge badge-pickuponly">Pickup only</span>';
       }
     } else {
-      html += shippingBadge(item.data.fulfillment);
+      html += renderShippingBadgeHtml(item.data.fulfillment);
     }
   } else {
-    html += shippingBadge(item.data.fulfillment);
+    html += renderShippingBadgeHtml(item.data.fulfillment);
   }
   return html;
 }
@@ -585,7 +585,7 @@ function buildExtrasHtml(detail: ListingDetail): string {
   // ── Description ───────────────────────────────────────────────────────────
   body += `<div class="deep-section"><div class="deep-section-label">Description</div>`;
   if (detail.description) {
-    body += `<div class="listing-description">${esc(tidyDescription(detail.description))}</div>`;
+    body += `<div class="listing-description">${esc(cleanDescription(detail.description))}</div>`;
   } else {
     body += `<p class="deep-empty">No description provided.</p>`;
   }
@@ -610,16 +610,16 @@ function renderCard(item: ListingItem): void {
   const listing = item.data;
 
   // Assign a UUID-based id on first render; reuse it on re-renders (e.g. after deep search enrichment).
-  let id = cardIdByUrl.get(listing.url);
-  if (!id) {
-    id = 'card-' + crypto.randomUUID();
-    cardIdByUrl.set(listing.url, id);
+  let cardId = cardIdByUrl.get(listing.url);
+  if (!cardId) {
+    cardId = 'card-' + crypto.randomUUID();
+    cardIdByUrl.set(listing.url, cardId);
   }
 
-  const existing = document.getElementById(id);
+  const existing = document.getElementById(cardId);
   const card = existing ?? document.createElement('div');
   card.className = `listing-card${item.detail ? ' enriched' : ''}`;
-  card.id = id;
+  card.id = cardId;
   card.dataset.url = listing.url;
 
   const thumb = listing.thumbnailUrl
@@ -647,7 +647,7 @@ function renderCard(item: ListingItem): void {
     </div>
   `;
 
-  if (!existing) el('listingsContainer').appendChild(card);
+  if (!existing) getElement('listingsContainer').appendChild(card);
 }
 
 function expandExtras(body: HTMLElement): void {
@@ -662,7 +662,7 @@ function collapseExtras(btn: HTMLButtonElement): void {
   btn.style.display = 'none';
 }
 
-function toggleDesc(btn: HTMLButtonElement): void {
+function toggleDescription(btn: HTMLButtonElement): void {
   const desc = btn.closest('.listing-description')!;
   const full  = desc.querySelector<HTMLElement>('.desc-full');
   const short = desc.querySelector<HTMLElement>('.desc-short');
@@ -678,9 +678,9 @@ function toggleDesc(btn: HTMLButtonElement): void {
 
 // ── Deep Search ───────────────────────────────────────────────────────────────
 
-async function runDeepSearch(): Promise<void> {
+async function runDeepSearchAsync(): Promise<void> {
   const toScrape = getOrderedListings()
-    .filter(item => !item.deepSearched && item.filterReason === null && item.aiFilterReason === null)
+    .filter(item => !item.hasBeenDeepSearched && item.filterReason === null && item.aiFilterReason === null)
     .map(item => item.data);
 
   if (toScrape.length === 0) return;
@@ -704,7 +704,7 @@ async function runDeepSearch(): Promise<void> {
   setDeepSearchingStatus(`Fetching details for ${toScrape.length} listing${toScrape.length !== 1 ? 's' : ''}…`);
 
   try {
-    await streamPost('/api/deep-search', { listings: toScrape, deepSearchId }, (ev) => {
+    await streamPostAsync('/api/deep-search', { listings: toScrape, deepSearchId }, (ev) => {
       if (ev.type === 'progress') {
         if (!deepSearchCancellationRequested) setDeepSearchingStatus(`Fetching details ${ev.index}/${ev.total} — ${String(ev.title).slice(0, 55)}…`);
       } else if (ev.type === 'detail') {
@@ -712,7 +712,7 @@ async function runDeepSearch(): Promise<void> {
         const detail = ev.detail as ListingDetail;
         const item = listingsByUrl.get(ev.url as string);
         if (item) {
-          item.deepSearched = true;
+          item.hasBeenDeepSearched = true;
           item.detail = detail;
           item.data.description = detail.description;
           if (detail.shippingAvailable !== null && detail.pickupAvailable !== null) {
@@ -739,23 +739,23 @@ async function runDeepSearch(): Promise<void> {
 
         renderDerived();
       } else if (ev.type === 'complete') {
-        const msg = hiddenByDescription > 0
+        const completionMessage = hiddenByDescription > 0
           ? `Deep search complete — ${hiddenByDescription} listing${hiddenByDescription !== 1 ? 's' : ''} hidden by description filter`
           : 'Deep search complete';
-        setStatus(msg, hiddenByDescription > 0 ? 'info' : 'success');
+        setStatus(completionMessage, hiddenByDescription > 0 ? 'info' : 'success');
         setTimeout(() => setStatus(null), 4000);
       } else if (ev.type === 'error') {
         setStatus(ev.message as string, 'error');
       }
     });
-  } catch (err) {
-    setStatus((err as Error).message, 'error');
+  } catch (error) {
+    setStatus((error as Error).message, 'error');
   }
 
   // Clear skeleton loaders from listings that never received details
   for (const listing of toScrape) {
     const item = listingsByUrl.get(listing.url);
-    if (item && !item.deepSearched) {
+    if (item && !item.hasBeenDeepSearched) {
       const card = getCardByUrl(listing.url);
       if (card) card.querySelector('.listing-extras')!.innerHTML = '';
     }
@@ -772,28 +772,28 @@ async function runDeepSearch(): Promise<void> {
 }
 
 function markDirty(): void {
-  el('saveCurrentBtn').classList.remove('hidden');
+  getElement('saveCurrentBtn').classList.remove('hidden');
 }
 
 function setSearchName(name: string | null): void {
   setCurrentSearchName(name);
-  el('searchTitle').textContent = name ?? 'new shiny thing';
-  el('saveCurrentBtn').classList.add('hidden');
+  getElement('searchTitle').textContent = name ?? 'new shiny thing';
+  getElement('saveCurrentBtn').classList.add('hidden');
 }
 
 // ── Saved searches ────────────────────────────────────────────────────────────
 
-async function fetchSavedSearches(): Promise<void> {
+async function fetchSavedSearchesAsync(): Promise<void> {
   try {
-    const res = await fetch('/api/saved-searches', { cache: 'no-store' });
-    const data = await res.json() as { searches: SavedSearch[] };
+    const response = await fetch('/api/saved-searches', { cache: 'no-store' });
+    const data = await response.json() as { searches: SavedSearch[] };
     renderSavedSearches(data.searches);
   } catch { /* non-critical */ }
 }
 
 function renderSavedSearches(searches: SavedSearch[]): void {
-  const list = el('savedSearchesList');
-  const count = el('savedSearchesCount');
+  const list = getElement('savedSearchesList');
+  const count = getElement('savedSearchesCount');
 
   count.textContent = String(searches.length);
   count.classList.toggle('hidden', searches.length === 0);
@@ -802,29 +802,29 @@ function renderSavedSearches(searches: SavedSearch[]): void {
     list.innerHTML = '<p class="deep-empty">No saved searches yet.</p>';
     return;
   }
-  list.innerHTML = searches.map(s => `
-    <div class="saved-search-row" data-id="${esc(s.id)}">
-      <a class="saved-search-name load-saved-btn" href="#" title="${esc(s.name)}">${esc(s.name)}</a>
-      <span class="saved-search-date">${new Date(s.createdAt).toLocaleDateString()} ${new Date(s.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
+  list.innerHTML = searches.map(savedSearch => `
+    <div class="saved-search-row" data-id="${esc(savedSearch.id)}">
+      <a class="saved-search-name load-saved-btn" href="#" title="${esc(savedSearch.name)}">${esc(savedSearch.name)}</a>
+      <span class="saved-search-date">${new Date(savedSearch.createdAt).toLocaleDateString()} ${new Date(savedSearch.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })}</span>
       <button class="btn btn-ghost delete-saved-btn" style="padding:0.25rem 0.65rem;font-size:0.78rem">✕</button>
     </div>
   `).join('');
 }
 
-async function saveCurrentSearch(name: string): Promise<void> {
-  const urls = urlCardStates.map(s => s.input.value.trim()).filter(Boolean);
+async function saveCurrentSearchAsync(name: string): Promise<void> {
+  const urls = urlCardStates.map(cardState => cardState.input.value.trim()).filter(Boolean);
   if (!name.trim() || urls.length === 0) return;
-  const res = await fetch('/api/saved-searches', {
+  const response = await fetch('/api/saved-searches', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: name.trim(), urls, filters: getFilters(), aiFilter: el<HTMLTextAreaElement>('aiFilter').value.trim() || null }),
+    body: JSON.stringify({ name: name.trim(), urls, filters: getFilters(), aiFilter: getElement<HTMLTextAreaElement>('aiFilter').value.trim() || null }),
   });
-  if (res.ok) await fetchSavedSearches();
+  if (response.ok) await fetchSavedSearchesAsync();
 }
 
-async function deleteSavedSearch(id: string): Promise<void> {
+async function deleteSavedSearchAsync(id: string): Promise<void> {
   await fetch(`/api/saved-searches/${id}`, { method: 'DELETE' });
-  await fetchSavedSearches();
+  await fetchSavedSearchesAsync();
 }
 
 function loadDiscoveryResults(data: { urls: string[]; filters: FrontendFilters; name: string }, aiPrompt: string): void {
@@ -832,54 +832,54 @@ function loadDiscoveryResults(data: { urls: string[]; filters: FrontendFilters; 
   while (urlCardStates.length > 1) removeUrlCard(urlCardStates[urlCardStates.length - 1]);
   urlCardStates[0].input.value = data.urls[0];
   updateCardSearchBtn(urlCardStates[0]);
-  for (let i = 1; i < data.urls.length; i++) {
+  for (let urlIndex = 1; urlIndex < data.urls.length; urlIndex++) {
     const state = createUrlCard();
-    state.input.value = data.urls[i];
+    state.input.value = data.urls[urlIndex];
     updateCardSearchBtn(state);
   }
   setFilters(data.filters);
   setSearchName(data.name);
   markDirty();
-  el<HTMLTextAreaElement>('aiFilter').value = aiPrompt;
+  getElement<HTMLTextAreaElement>('aiFilter').value = aiPrompt;
   applyClientFilters();
 }
 
-async function loadSavedSearch(search: SavedSearch): Promise<void> {
+async function loadSavedSearchAsync(search: SavedSearch): Promise<void> {
   resetAllResults();
   while (urlCardStates.length > 1) removeUrlCard(urlCardStates[urlCardStates.length - 1]);
   if (search.urls.length === 0) return;
   urlCardStates[0].input.value = search.urls[0];
   updateCardSearchBtn(urlCardStates[0]);
-  for (let i = 1; i < search.urls.length; i++) {
+  for (let urlIndex = 1; urlIndex < search.urls.length; urlIndex++) {
     const state = createUrlCard();
-    state.input.value = search.urls[i];
+    state.input.value = search.urls[urlIndex];
     updateCardSearchBtn(state);
   }
   setFilters(search.filters);
-  el<HTMLTextAreaElement>('aiFilter').value = search.aiFilter ?? '';
+  getElement<HTMLTextAreaElement>('aiFilter').value = search.aiFilter ?? '';
   setSearchName(search.name);
-  el('savedSearchesPanel').classList.add('hidden');
+  getElement('savedSearchesPanel').classList.add('hidden');
   applyClientFilters();
-  for (const state of urlCardStates) searchUrlCard(state);
+  for (const state of urlCardStates) searchUrlCardAsync(state);
 }
 
 // ── Event listeners ───────────────────────────────────────────────────────────
 
 // Initialise with the first URL card; focus discovery prompt on load
 const firstCard = createUrlCard();
-el<HTMLTextAreaElement>('discoveryPrompt').focus();
+getElement<HTMLTextAreaElement>('discoveryPrompt').focus();
 
-el('addUrlBtn').addEventListener('click', () => {
+getElement('addUrlBtn').addEventListener('click', () => {
   const newCard = createUrlCard();
   newCard.input.focus();
-  newCard.el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  newCard.containerElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 });
 
-el<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearch());
+getElement<HTMLButtonElement>('deepBtn').addEventListener('click', () => runDeepSearchAsync());
 
-el('toggleFilteredBtn').addEventListener('click', () => {
+getElement('toggleFilteredBtn').addEventListener('click', () => {
   setShowFilteredListings(!showFilteredListings);
-  el<HTMLButtonElement>('toggleFilteredBtn').textContent = showFilteredListings ? 'hide' : 'show';
+  getElement<HTMLButtonElement>('toggleFilteredBtn').textContent = showFilteredListings ? 'hide' : 'show';
   for (const item of getOrderedListings()) {
     if (item.filterReason !== null || item.aiFilterReason !== null) {
       const card = getCardByUrl(item.data.url);
@@ -890,8 +890,8 @@ el('toggleFilteredBtn').addEventListener('click', () => {
 
 
 // Populate region dropdown and wire fulfillment toggle
-fetch('/api/regions').then(r => r.json()).then((regions: Array<{ value: string; display: string }>) => {
-  const select = el<HTMLSelectElement>('discoveryRegion');
+fetch('/api/regions').then(regionResponse => regionResponse.json()).then((regions: Array<{ value: string; display: string }>) => {
+  const select = getElement<HTMLSelectElement>('discoveryRegion');
   for (const region of regions) {
     const opt = document.createElement('option');
     opt.value = region.value;
@@ -900,135 +900,135 @@ fetch('/api/regions').then(r => r.json()).then((regions: Array<{ value: string; 
   }
 }).catch(() => { /* regions unavailable — dropdown stays empty */ });
 
-el<HTMLSelectElement>('discoveryFulfillment').addEventListener('change', () => {
-  const isPickup = el<HTMLSelectElement>('discoveryFulfillment').value === 'pickup';
-  el('discoveryRegion').style.display = isPickup ? '' : 'none';
+getElement<HTMLSelectElement>('discoveryFulfillment').addEventListener('change', () => {
+  const isPickup = getElement<HTMLSelectElement>('discoveryFulfillment').value === 'pickup';
+  getElement('discoveryRegion').style.display = isPickup ? '' : 'none';
   updateDiscoveryBtn();
 });
-el<HTMLSelectElement>('discoveryRegion').addEventListener('change', updateDiscoveryBtn);
+getElement<HTMLSelectElement>('discoveryRegion').addEventListener('change', updateDiscoveryBtn);
 
-el<HTMLTextAreaElement>('discoveryPrompt').addEventListener('input', updateDiscoveryBtn);
-el<HTMLInputElement>('discoveryMaxPrice').addEventListener('input', updateDiscoveryBtn);
-el<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
-  const prompt = el<HTMLTextAreaElement>('discoveryPrompt').value.trim();
+getElement<HTMLTextAreaElement>('discoveryPrompt').addEventListener('input', updateDiscoveryBtn);
+getElement<HTMLInputElement>('discoveryMaxPrice').addEventListener('input', updateDiscoveryBtn);
+getElement<HTMLButtonElement>('discoveryBtn').addEventListener('click', async () => {
+  const prompt = getElement<HTMLTextAreaElement>('discoveryPrompt').value.trim();
   if (!prompt) return;
-  const maxPriceVal = el<HTMLInputElement>('discoveryMaxPrice').value.trim();
+  const maxPriceVal = getElement<HTMLInputElement>('discoveryMaxPrice').value.trim();
   const maxPrice = maxPriceVal ? parseFloat(maxPriceVal) : undefined;
-  const fulfillment = el<HTMLSelectElement>('discoveryFulfillment').value;
-  const regionValue = fulfillment === 'pickup' ? el<HTMLSelectElement>('discoveryRegion').value : undefined;
-  const btn = el<HTMLButtonElement>('discoveryBtn');
-  const errorEl = el<HTMLDivElement>('discoveryError');
-  errorEl.style.display = 'none';
-  btn.disabled = true;
-  btn.textContent = 'Working…';
+  const fulfillment = getElement<HTMLSelectElement>('discoveryFulfillment').value;
+  const regionValue = fulfillment === 'pickup' ? getElement<HTMLSelectElement>('discoveryRegion').value : undefined;
+  const discoveryButton = getElement<HTMLButtonElement>('discoveryBtn');
+  const discoveryErrorElement = getElement<HTMLDivElement>('discoveryError');
+  discoveryErrorElement.style.display = 'none';
+  discoveryButton.disabled = true;
+  discoveryButton.textContent = 'Working…';
   try {
-    const res = await fetch('/api/discover', {
+    const response = await fetch('/api/discover', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ prompt, maxPrice, fulfillment, regionValue }),
     });
-    const data = await res.json() as { urls?: string[]; filters?: FrontendFilters; name?: string; error?: string };
-    if (!res.ok || !data.urls?.length) {
-      errorEl.textContent = data.error ?? 'Discovery failed';
-      errorEl.style.display = 'block';
+    const data = await response.json() as { urls?: string[]; filters?: FrontendFilters; name?: string; error?: string };
+    if (!response.ok || !data.urls?.length) {
+      discoveryErrorElement.textContent = data.error ?? 'Discovery failed';
+      discoveryErrorElement.style.display = 'block';
       return;
     }
     loadDiscoveryResults(data as { urls: string[]; filters: FrontendFilters; name: string }, prompt);
   } catch {
-    errorEl.textContent = 'Discovery failed';
-    errorEl.style.display = 'block';
+    discoveryErrorElement.textContent = 'Discovery failed';
+    discoveryErrorElement.style.display = 'block';
   } finally {
-    btn.textContent = 'Get it!';
+    discoveryButton.textContent = 'Get it!';
     updateDiscoveryBtn();
   }
 });
 
-el<HTMLTextAreaElement>('aiFilter').addEventListener('input', renderDerived);
-el<HTMLTextAreaElement>('aiFilter').addEventListener('input', markDirty);
-el<HTMLButtonElement>('applyAiFilterBtn').addEventListener('click', () => runAiFilter());
+getElement<HTMLTextAreaElement>('aiFilter').addEventListener('input', renderDerived);
+getElement<HTMLTextAreaElement>('aiFilter').addEventListener('input', markDirty);
+getElement<HTMLButtonElement>('applyAiFilterBtn').addEventListener('click', () => runAiFilterAsync());
 
 (['minPrice', 'maxPrice', 'keywords', 'excludeKeywords'] as const).forEach(id => {
-  el(id).addEventListener('input', applyClientFilters);
-  el(id).addEventListener('input', markDirty);
+  getElement(id).addEventListener('input', applyClientFilters);
+  getElement(id).addEventListener('input', markDirty);
 });
 (['filterShipping', 'filterPickup'] as const).forEach(id => {
-  el(id).addEventListener('change', applyClientFilters);
-  el(id).addEventListener('change', markDirty);
+  getElement(id).addEventListener('change', applyClientFilters);
+  getElement(id).addEventListener('change', markDirty);
 });
 
 // Mark dirty on any URL input change or new URL card
-el('urlCardsContainer').addEventListener('input', markDirty);
-el('addUrlBtn').addEventListener('click', markDirty);
+getElement('urlCardsContainer').addEventListener('input', markDirty);
+getElement('addUrlBtn').addEventListener('click', markDirty);
 
 // Event delegation for description toggles (avoids global onclick)
-el('listingsContainer').addEventListener('click', (e: MouseEvent) => {
-  const showLessBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.extras-toggle');
+getElement('listingsContainer').addEventListener('click', (mouseEvent: MouseEvent) => {
+  const showLessBtn = (mouseEvent.target as HTMLElement).closest<HTMLButtonElement>('.extras-toggle');
   if (showLessBtn) { collapseExtras(showLessBtn); return; }
-  const collapsedBody = (e.target as HTMLElement).closest<HTMLElement>('.extras-body.collapsed');
+  const collapsedBody = (mouseEvent.target as HTMLElement).closest<HTMLElement>('.extras-body.collapsed');
   if (collapsedBody) { expandExtras(collapsedBody); return; }
-  const descBtn = (e.target as HTMLElement).closest<HTMLButtonElement>('.desc-toggle');
-  if (descBtn) toggleDesc(descBtn);
+  const descBtn = (mouseEvent.target as HTMLElement).closest<HTMLButtonElement>('.desc-toggle');
+  if (descBtn) toggleDescription(descBtn);
 });
 
 // ── Saved searches UI ─────────────────────────────────────────────────────────
 
-el('savedSearchesToggle').addEventListener('click', () => {
-  const panel = el('savedSearchesPanel');
+getElement('savedSearchesToggle').addEventListener('click', () => {
+  const panel = getElement('savedSearchesPanel');
   const nowHidden = panel.classList.toggle('hidden');
-  if (!nowHidden) fetchSavedSearches();
+  if (!nowHidden) fetchSavedSearchesAsync();
 });
 
 function openSaveModal(): void {
-  const input = el<HTMLInputElement>('saveSearchName');
+  const input = getElement<HTMLInputElement>('saveSearchName');
   input.value = currentSearchName ?? '';
   input.select();
-  el('saveSearchModal').classList.remove('hidden');
+  getElement('saveSearchModal').classList.remove('hidden');
   input.focus();
 }
 
 function closeSaveModal(): void {
-  el('saveSearchModal').classList.add('hidden');
+  getElement('saveSearchModal').classList.add('hidden');
 }
 
-el('saveCurrentBtn').addEventListener('click', openSaveModal);
+getElement('saveCurrentBtn').addEventListener('click', openSaveModal);
 
-el('saveSearchCancelBtn').addEventListener('click', closeSaveModal);
+getElement('saveSearchCancelBtn').addEventListener('click', closeSaveModal);
 
-el('saveSearchModal').addEventListener('click', (e: MouseEvent) => {
-  if (e.target === el('saveSearchModal')) closeSaveModal();
+getElement('saveSearchModal').addEventListener('click', (mouseEvent: MouseEvent) => {
+  if (mouseEvent.target === getElement('saveSearchModal')) closeSaveModal();
 });
 
-el('saveSearchConfirmBtn').addEventListener('click', async () => {
-  const name = el<HTMLInputElement>('saveSearchName').value.trim();
+getElement('saveSearchConfirmBtn').addEventListener('click', async () => {
+  const name = getElement<HTMLInputElement>('saveSearchName').value.trim();
   if (!name) return;
-  const btn = el<HTMLButtonElement>('saveSearchConfirmBtn');
-  btn.disabled = true;
-  await saveCurrentSearch(name);
+  const confirmButton = getElement<HTMLButtonElement>('saveSearchConfirmBtn');
+  confirmButton.disabled = true;
+  await saveCurrentSearchAsync(name);
   setSearchName(name);
   closeSaveModal();
-  btn.disabled = false;
-  el('savedSearchesPanel').classList.remove('hidden');
+  confirmButton.disabled = false;
+  getElement('savedSearchesPanel').classList.remove('hidden');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 });
 
-el<HTMLInputElement>('saveSearchName').addEventListener('keydown', (e: KeyboardEvent) => {
-  if (e.key === 'Enter') el<HTMLButtonElement>('saveSearchConfirmBtn').click();
-  if (e.key === 'Escape') closeSaveModal();
+getElement<HTMLInputElement>('saveSearchName').addEventListener('keydown', (keyboardEvent: KeyboardEvent) => {
+  if (keyboardEvent.key === 'Enter') getElement<HTMLButtonElement>('saveSearchConfirmBtn').click();
+  if (keyboardEvent.key === 'Escape') closeSaveModal();
 });
 
-el('savedSearchesList').addEventListener('click', async (e: MouseEvent) => {
-  const row = (e.target as HTMLElement).closest<HTMLElement>('.saved-search-row');
+getElement('savedSearchesList').addEventListener('click', async (mouseEvent: MouseEvent) => {
+  const row = (mouseEvent.target as HTMLElement).closest<HTMLElement>('.saved-search-row');
   if (!row) return;
-  const id = row.dataset.id!;
-  if ((e.target as HTMLElement).closest('.delete-saved-btn')) {
-    await deleteSavedSearch(id);
+  const savedSearchId = row.dataset.id!;
+  if ((mouseEvent.target as HTMLElement).closest('.delete-saved-btn')) {
+    await deleteSavedSearchAsync(savedSearchId);
     return;
   }
-  if ((e.target as HTMLElement).closest('.load-saved-btn')) {
-    e.preventDefault();
-    const res = await fetch(`/api/saved-searches/${id}`);
-    if (!res.ok) return;
-    const { search } = await res.json() as { search: SavedSearch };
-    await loadSavedSearch(search);
+  if ((mouseEvent.target as HTMLElement).closest('.load-saved-btn')) {
+    mouseEvent.preventDefault();
+    const response = await fetch(`/api/saved-searches/${savedSearchId}`);
+    if (!response.ok) return;
+    const { search } = await response.json() as { search: SavedSearch };
+    await loadSavedSearchAsync(search);
   }
 });

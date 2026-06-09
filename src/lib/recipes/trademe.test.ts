@@ -58,13 +58,15 @@ vi.mock('../queue', () => ({
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function makeListing(overrides: Partial<Listing> = {}): Listing {
+  const { source = 'trademe', ...restOverrides } = overrides;
   return {
+    source,
     title: 'MacBook Pro 14" 2021 M1 Pro 16GB',
     price: 1500,
     priceDisplay: '$1,500',
     location: 'Auckland City, Auckland',
     url: 'https://www.trademe.co.nz/a/marketplace/computers/laptops/laptops/apple/listing/12345',
-    ...overrides,
+    ...restOverrides,
   };
 }
 
@@ -516,7 +518,7 @@ describe('quickSearch', () => {
     );
 
     const collected: unknown[] = [];
-    await trademeRecipe.quickSearch(
+    await trademeRecipe.quickSearchAsync(
       'https://www.trademe.co.nz/a/marketplace/computers/search',
       (ev) => { if (ev.type === 'listing') collected.push(ev.data); },
     );

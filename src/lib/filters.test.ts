@@ -10,14 +10,16 @@ const defaultFilters: FrontendFilters = {
 };
 
 function makeListing(overrides: Partial<Listing> = {}): Listing {
+  const { source = 'trademe', ...restOverrides } = overrides;
   return {
+    source,
     title: 'MacBook Pro 14" M1 Pro',
     price: 1500,
     priceDisplay: '$1,500',
     location: 'Auckland City, Auckland',
     url: 'https://www.trademe.co.nz/a/marketplace/listing/12345',
     fulfillment: { pickupAvailable: true, shippingAvailable: true },
-    ...overrides,
+    ...restOverrides,
   };
 }
 

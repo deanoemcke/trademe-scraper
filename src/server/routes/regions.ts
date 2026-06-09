@@ -17,7 +17,7 @@ export function getRegions(): RegionEntry[] {
   return _regions;
 }
 
-export function handleRegions(_req: unknown, res: ServerResponse): void {
+export function handleRegions(_req: unknown, response: ServerResponse): void {
   const regions = getRegions();
-  sendJSON(res, 200, regions.map(r => ({ value: String(r.tradeMeRegionId), display: r.name })));
+  sendJSON(response, 200, regions.map(region => ({ value: String(region.tradeMeRegionId), display: region.name })));
 }

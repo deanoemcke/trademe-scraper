@@ -10,31 +10,31 @@ export type AiConfig = { url: string; model: string; apiKey: string };
 
 export function getAIConfig(): AiConfig | string {
   const provider = (process.env.AI_PROVIDER ?? 'groq').toLowerCase();
-  const cfg = AI_PROVIDERS[provider];
-  if (!cfg) return `Unknown AI_PROVIDER "${provider}" — use groq, openrouter, or gemini`;
-  const apiKey = process.env[cfg.keyVar];
-  if (!apiKey) return `${cfg.keyVar} is not set`;
-  return { url: cfg.url, model: cfg.model, apiKey };
+  const providerConfig = AI_PROVIDERS[provider];
+  if (!providerConfig) return `Unknown AI_PROVIDER "${provider}" — use groq, openrouter, or gemini`;
+  const apiKey = process.env[providerConfig.keyVar];
+  if (!apiKey) return `${providerConfig.keyVar} is not set`;
+  return { url: providerConfig.url, model: providerConfig.model, apiKey };
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function aiJSON(cfg: AiConfig, label: string, systemMsg: string, userMsg: string, maxTokens: number): Promise<any> {
-  const trim = (s: string) => s.replace(/\s+/g, ' ').slice(0, 100);
-  console.log(`[AI] ${label} → model: ${cfg.model}\n[system] ${trim(systemMsg)}…\n[user] ${trim(userMsg)}…`);
+export async function aiJSON(aiConfig: AiConfig, label: string, systemMessage: string, userMessage: string, maxTokens: number): Promise<any> {
+  const trim = (text: string) => text.replace(/\s+/g, ' ').slice(0, 100);
+  console.log(`[AI] ${label} → model: ${aiConfig.model}\n[system] ${trim(systemMessage)}…\n[user] ${trim(userMessage)}…`);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 30_000);
-  let r: Response;
+  let apiResponse: Response;
   try {
-    r = await fetch(cfg.url, {
+    apiResponse = await fetch(aiConfig.url, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${cfg.apiKey}`, 'Content-Type': 'application/json' },
+      headers: { 'Authorization': `Bearer ${aiConfig.apiKey}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: cfg.model,
+        model: aiConfig.model,
         max_tokens: maxTokens,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: systemMsg },
-          { role: 'user', content: userMsg },
+          { role: 'system', content: systemMessage },
+          { role: 'user', content: userMessage },
         ],
       }),
       signal: controller.signal,
@@ -42,16 +42,16 @@ export async function aiJSON(cfg: AiConfig, label: string, systemMsg: string, us
   } finally {
     clearTimeout(timer);
   }
-  if (!r.ok) {
+  if (!apiResponse.ok) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const e = await r.json().catch(() => ({})) as any;
-    const body = Array.isArray(e) ? e[0] : e;
-    const msg = body?.error?.message ?? body?.message ?? JSON.stringify(e);
-    throw new Error(`AI error (${label}) [${r.status}]: ${msg || r.statusText}`);
+    const errorData = await apiResponse.json().catch(() => ({})) as any;
+    const errorBody = Array.isArray(errorData) ? errorData[0] : errorData;
+    const errorMessage = errorBody?.error?.message ?? errorBody?.message ?? JSON.stringify(errorData);
+    throw new Error(`AI error (${label}) [${apiResponse.status}]: ${errorMessage || apiResponse.statusText}`);
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const d = await r.json() as any;
-  const raw: string = d.choices?.[0]?.message?.content ?? '{}';
+  const responseData = await apiResponse.json() as any;
+  const raw: string = responseData.choices?.[0]?.message?.content ?? '{}';
   // Extract JSON from a markdown code fence if the model wrapped it in prose
   let stripped: string;
   const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
