@@ -7,6 +7,24 @@ import type { FilterReason } from '../lib/filters';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
+export type UrlCardSearchStatus = 'idle' | 'searching' | 'cancelling' | 'done';
+
+export function isSearchButtonDisabled(
+  status: UrlCardSearchStatus,
+  searchedUrl: string,
+  inputValue: string
+): boolean {
+  return status === 'searching' || status === 'cancelling' || (status === 'done' && searchedUrl === inputValue);
+}
+
+export function canCancelSearch(status: UrlCardSearchStatus): boolean {
+  return status === 'searching';
+}
+
+export function isCardSearchActive(status: UrlCardSearchStatus): boolean {
+  return status === 'searching' || status === 'cancelling';
+}
+
 export interface ListingItem {
   data: Listing;
   detail: ListingDetail | null;
@@ -25,11 +43,9 @@ export interface UrlCardState {
   countElement: HTMLElement;
   cacheStatusElement: HTMLElement;
   statusElement: HTMLElement;
-  hasBeenSearched: boolean;
+  searchStatus: UrlCardSearchStatus;
   searchedUrl: string;
-  isSearching: boolean;
   searchId: string | null;
-  isCancellationRequested: boolean;
   listingUrls: string[];
 }
 

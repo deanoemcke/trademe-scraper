@@ -6,6 +6,7 @@ import { sourceFaviconHtml } from './recipeDisplay';
 import {
   type ListingItem,
   type UrlCardState,
+  type UrlCardSearchStatus,
   type SavedSearch,
   listingsByUrl,
   urlCardStates,
@@ -20,6 +21,9 @@ import {
   setIsDeepSearchRunning,
   setDeepSearchId,
   setDeepSearchCancellationRequested,
+  isSearchButtonDisabled,
+  canCancelSearch,
+  isCardSearchActive,
 } from './state';
 
 // ── Utility ───────────────────────────────────────────────────────────────────
@@ -77,7 +81,7 @@ function setSearchingStatus(state: UrlCardState, statusMessage: string): void {
   const statusBar = state.statusElement;
   statusBar.className = 'url-card-status info';
   statusBar.innerHTML = `<span class="spinner"></span><span>${esc(statusMessage)}</span>`;
-  if (!state.isCancellationRequested) {
+  if (canCancelSearch(state.searchStatus)) {
     const cancelButton = document.createElement('button');
     cancelButton.className = 'cache-clear-btn';
     cancelButton.style.marginLeft = '0.5rem';
@@ -89,8 +93,8 @@ function setSearchingStatus(state: UrlCardState, statusMessage: string): void {
 }
 
 function cancelSearch(state: UrlCardState): void {
-  if (!state.isSearching || state.isCancellationRequested) return;
-  state.isCancellationRequested = true;
+  if (!canCancelSearch(state.searchStatus)) return;
+  state.searchStatus = 'cancelling';
   setSearchingStatus(state, 'Cancelling…');
   fetch('/api/cancel-search', {
     method: 'POST',
@@ -137,8 +141,7 @@ function setStatus(statusMessage: string | null, type: 'info' | 'success' | 'err
 
 function updateCardSearchBtn(state: UrlCardState): void {
   const current = state.input.value.trim();
-  const alreadySearched = state.hasBeenSearched && current === state.searchedUrl;
-  state.searchButton.disabled = state.isSearching || isDeepSearchRunning || !isValidRecipeUrl(current) || alreadySearched;
+  state.searchButton.disabled = isDeepSearchRunning || !isValidRecipeUrl(current) || isSearchButtonDisabled(state.searchStatus, state.searchedUrl, current);
 }
 
 function setDeepSearchBusy(busy: boolean): void {
@@ -173,7 +176,7 @@ function createUrlCard(): UrlCardState {
   const cacheStatusElement = card.querySelector<HTMLElement>('.cache-status')!;
   const statusElement = card.querySelector<HTMLElement>('.url-card-status')!;
 
-  const state: UrlCardState = { containerElement: card, input, searchButton, removeButton, criteriaElement, countElement, cacheStatusElement, statusElement, hasBeenSearched: false, searchedUrl: '', isSearching: false, searchId: null, isCancellationRequested: false, listingUrls: [] };
+  const state: UrlCardState = { containerElement: card, input, searchButton, removeButton, criteriaElement, countElement, cacheStatusElement, statusElement, searchStatus: 'idle', searchedUrl: '', searchId: null, listingUrls: [] };
   urlCardStates.push(state);
 
   input.addEventListener('input', () => updateCardSearchBtn(state));
@@ -197,7 +200,7 @@ function resetAllResults(): void {
   getElement('resultsSection').classList.add('hidden');
   for (const cardState of urlCardStates) {
     cardState.listingUrls = [];
-    cardState.hasBeenSearched = false;
+    cardState.searchStatus = 'idle';
     cardState.searchedUrl = '';
     cardState.countElement.textContent = '';
     cardState.criteriaElement.querySelector('.criteria-grid')!.innerHTML = '';
@@ -205,9 +208,7 @@ function resetAllResults(): void {
     cardState.cacheStatusElement.classList.add('hidden');
     cardState.cacheStatusElement.innerHTML = '';
     cardState.statusElement.classList.add('hidden');
-    cardState.isSearching = false;
     cardState.searchId = null;
-    cardState.isCancellationRequested = false;
     cardState.input.readOnly = false;
     updateCardSearchBtn(cardState);
   }
@@ -229,7 +230,7 @@ function renderDerived(): void {
   getElement('resultCount').textContent = String(visible.length);
   getElement('filteredCountNum').textContent = String(filtered);
   getElement('filteredCount').classList.toggle('hidden', filtered === 0);
-  const isAnyCardSearching = urlCardStates.some(cardState => cardState.isSearching);
+  const isAnyCardSearching = urlCardStates.some(cardState => isCardSearchActive(cardState.searchStatus));
   const hasUnscraped = visible.some(listingItem => !listingItem.hasBeenDeepSearched);
   getElement<HTMLButtonElement>('deepBtn').disabled = isDeepSearchRunning || isAnyCardSearching || !hasUnscraped;
   const prompt = getElement<HTMLTextAreaElement>('aiFilter').value.trim();
@@ -253,7 +254,7 @@ function resetCardForResearch(state: UrlCardState): void {
     }
   }
   state.listingUrls = [];
-  state.hasBeenSearched = false;
+  state.searchStatus = 'idle';
   state.searchedUrl = '';
   state.countElement.textContent = '';
   state.criteriaElement.querySelector('.criteria-grid')!.innerHTML = '';
@@ -287,12 +288,11 @@ async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
   const url = state.input.value.trim();
   if (!isValidRecipeUrl(url)) return;
 
-  if (state.hasBeenSearched) resetCardForResearch(state);
+  if (state.searchStatus === 'done') resetCardForResearch(state);
 
   getElement('resultsSection').classList.remove('hidden');
-  state.isSearching = true;
+  state.searchStatus = 'searching';
   state.searchId = crypto.randomUUID();
-  state.isCancellationRequested = false;
   updateCardSearchBtn(state);
   renderDerived();
   setSearchingStatus(state, 'Fetching listings…');
@@ -311,7 +311,7 @@ async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
       } else if (ev.type === 'cached') {
         cachedAge = ev.age as string;
       } else if (ev.type === 'progress') {
-        if (!state.isCancellationRequested) setSearchingStatus(state, ev.message as string);
+        if (canCancelSearch(state.searchStatus)) setSearchingStatus(state, ev.message as string);
       } else if (ev.type === 'listing') {
         const listing = ev.data as Listing;
         totalFound++;
@@ -332,10 +332,9 @@ async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
     setCardStatus(state, (error as Error).message, 'error');
   }
 
-  state.isSearching = false;
-  const wasCancelled = state.isCancellationRequested;
+  const wasCancelled = (state.searchStatus as UrlCardSearchStatus) === 'cancelling';
+  state.searchStatus = wasCancelled ? 'idle' : 'done';
   state.searchId = null;
-  state.isCancellationRequested = false;
 
   if (wasCancelled) {
     setCardStatus(state, `Cancelled — ${totalFound} listing${totalFound !== 1 ? 's' : ''} loaded`, 'error');
@@ -343,8 +342,6 @@ async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
     if (listingsByUrl.size > 0) applyClientFilters();
     return;
   }
-
-  state.hasBeenSearched = true;
   state.searchedUrl = url;
   state.input.readOnly = true;
   updateCardSearchBtn(state);
