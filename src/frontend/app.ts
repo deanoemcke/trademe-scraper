@@ -1,5 +1,5 @@
 import { computeFilterReason, type FrontendFilters } from '../lib/filters';
-import { canHandleUrl } from '../lib/recipes/matcher';
+import { isValidRecipeUrl } from '../lib/recipes/matcher';
 import type { Listing, ListingDetail } from '../lib/recipes/base';
 import { esc } from './html';
 import { sourceFaviconHtml } from './recipeDisplay';
@@ -138,7 +138,7 @@ function setStatus(statusMessage: string | null, type: 'info' | 'success' | 'err
 function updateCardSearchBtn(state: UrlCardState): void {
   const current = state.input.value.trim();
   const alreadySearched = state.hasBeenSearched && current === state.searchedUrl;
-  state.searchButton.disabled = state.isSearching || isDeepSearchRunning || !canHandleUrl(current) || alreadySearched;
+  state.searchButton.disabled = state.isSearching || isDeepSearchRunning || !isValidRecipeUrl(current) || alreadySearched;
 }
 
 function setDeepSearchBusy(busy: boolean): void {
@@ -285,7 +285,7 @@ function removeUrlCard(state: UrlCardState): void {
 
 async function searchUrlCardAsync(state: UrlCardState): Promise<void> {
   const url = state.input.value.trim();
-  if (!canHandleUrl(url)) return;
+  if (!isValidRecipeUrl(url)) return;
 
   if (state.hasBeenSearched) resetCardForResearch(state);
 

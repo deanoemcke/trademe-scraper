@@ -2,7 +2,7 @@
 // Single source of truth for which URLs each recipe handles.
 // Update this list when adding a new recipe.
 export const RECIPE_PATTERNS = [
-  { name: 'trademe', hostname: 'trademe.co.nz' },
+  { name: 'trademe', hostname: 'trademe.co.nz', pathPrefix: '' },
   { name: 'facebook', hostname: 'facebook.com', pathPrefix: '/marketplace/' },
 ] as const;
 
