@@ -1,10 +1,26 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AiConfig } from "../ai";
+import { aiJSON } from "../ai";
+import { stmtGetCategoriesAtDepth2, stmtGetCategoriesByTop2 } from "../db";
 import type { DiscoverEntry } from "./discover";
-import { buildFacebookUrl, buildTrademeUrl, collapseEntries } from "./discover";
+import {
+  STEP2_SYSTEM_PROMPT,
+  buildFacebookUrl,
+  buildTrademeUrl,
+  collapseEntries,
+  discoverCategoriesAsync,
+} from "./discover";
 
 // Mock server-only deps that are not exercised by the pure functions under test.
-vi.mock("../db", () => ({}));
-vi.mock("../ai", () => ({}));
+vi.mock("../db", () => ({
+  getDb: vi.fn(),
+  stmtGetCategoriesAtDepth2: vi.fn(),
+  stmtGetCategoriesByTop2: vi.fn(),
+}));
+vi.mock("../ai", () => ({
+  aiJSON: vi.fn(),
+  getAIConfig: vi.fn(),
+}));
 vi.mock("../helpers", () => ({}));
 vi.mock("../../lib/validate", () => ({}));
 vi.mock("./regions", () => ({ getRegions: () => [] }));
@@ -226,5 +242,51 @@ describe("buildFacebookUrl", () => {
     const url = buildFacebookUrl("macbook", 0, "pickup", "999", TEST_REGIONS);
     expect(url).toContain("/marketplace/search");
     expect(url).not.toContain("/marketplace/undefined/");
+  });
+});
+
+// ── STEP2_SYSTEM_PROMPT ───────────────────────────────────────────────────────
+
+describe("STEP2_SYSTEM_PROMPT", () => {
+  it("is a non-empty string", () => {
+    expect(typeof STEP2_SYSTEM_PROMPT).toBe("string");
+    expect(STEP2_SYSTEM_PROMPT.length).toBeGreaterThan(20);
+  });
+});
+
+// ── discoverCategoriesAsync ───────────────────────────────────────────────────
+
+const MOCK_BROAD_CATEGORIES = [{ display: "Electronics", slug: "electronics/electronics" }];
+const MOCK_SUB_CATEGORIES = [{ display: "Laptops", slug: "electronics/laptops" }];
+const MOCK_DB = {} as ReturnType<typeof import("../db").getDb>;
+const MOCK_AI_CONFIG = {} as AiConfig;
+
+describe("discoverCategoriesAsync", () => {
+  beforeEach(() => {
+    vi.mocked(stmtGetCategoriesAtDepth2).mockReturnValue({ all: () => MOCK_BROAD_CATEGORIES } as any);
+    vi.mocked(stmtGetCategoriesByTop2).mockReturnValue({ all: () => MOCK_SUB_CATEGORIES } as any);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns filters without a minPrice field", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], name: "laptop" } as any)
+      .mockResolvedValueOnce({ categories: [{ slug: "electronics/laptops", searchString: null }] } as any);
+
+    const result = await discoverCategoriesAsync("laptop", 500, "any", undefined, MOCK_AI_CONFIG, MOCK_DB);
+    expect(result.filters).not.toHaveProperty("minPrice");
+  });
+
+  it("throws a meaningful error (not TypeError) when a step2 result is null", async () => {
+    vi.mocked(aiJSON)
+      .mockResolvedValueOnce({ categories: ["Electronics"], name: "laptop" } as any)
+      .mockResolvedValueOnce(null as any);
+
+    await expect(
+      discoverCategoriesAsync("laptop", 500, "any", undefined, MOCK_AI_CONFIG, MOCK_DB),
+    ).rejects.toThrow("AI returned no valid specific categories");
   });
 });
